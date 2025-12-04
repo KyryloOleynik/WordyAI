@@ -5,8 +5,7 @@ import Card from '@/components/ui/Card';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
 import { useLocalLLM } from '@/hooks/useLocalLLM';
 import { ModelDownloadIndicator } from '@/components/ui/ModelDownloadIndicator';
-import { addWord, getSettings, addXP, DictionaryWord } from '@/services/storageService';
-import { XP_REWARDS } from '@/services/xpService';
+import { addWord, getSettings, addXP, DictionaryWord, XP_REWARDS } from '@/services/storageService';
 import { translateWord } from '@/services/translationService';
 
 const STORY_TOPICS = [

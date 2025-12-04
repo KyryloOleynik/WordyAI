@@ -3,8 +3,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useState, useEffect, useCallback } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
-import { getStats, getAllWords, getSettings, UserStats, UserSettings } from '@/services/storageService';
-import { getLevelTitle } from '@/services/xpService';
+import { getStats, getAllWords, getSettings, UserStats, UserSettings, getLevelTitle } from '@/services/storageService';
 
 export default function HomeScreen() {
     const navigation = useNavigation<any>();

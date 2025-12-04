@@ -5,7 +5,7 @@ import Card from '@/components/ui/Card';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
 import { useLocalLLM } from '@/hooks/useLocalLLM';
 import { ModelDownloadIndicator } from '@/components/ui/ModelDownloadIndicator';
-import { XP_REWARDS } from '@/services/xpService';
+import { XP_REWARDS } from '@/services/storageService';
 
 interface PracticeCard {
     id: string;

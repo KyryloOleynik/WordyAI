@@ -5,9 +5,8 @@ import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
 import { useLocalLLM } from '@/hooks/useLocalLLM';
 import { ModelDownloadIndicator } from '@/components/ui/ModelDownloadIndicator';
 import { VolumetricButton, SuccessAnimation } from '@/components/ui/SharedComponents';
-import { addXP } from '@/services/storageService';
-import { XP_REWARDS } from '@/services/xpService';
-import { generateRussianSentence, calculateTranslationAccuracy } from '@/services/aiService';
+import { addXP, XP_REWARDS } from '@/services/storageService';
+import { generateRussianSentence, evaluateTranslation } from '@/services/aiService';
 
 const LEVELS = [
     { id: 'A1-A2', label: 'Начальный', color: colors.cefr.A1 },
@@ -97,7 +96,7 @@ export default function TranslationModeScreen() {
             const checkResult = await checkEnglishTranslation(russianSentence, userTranslation);
 
             // Use formula-based accuracy calculation
-            const accuracyResult = await calculateTranslationAccuracy(
+            const accuracyResult = await evaluateTranslation(
                 russianSentence,
                 userTranslation,
                 checkResult.suggestedTranslation

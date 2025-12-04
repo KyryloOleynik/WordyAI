@@ -2,9 +2,7 @@ import { StyleSheet, Text, View, Pressable, Animated, ActivityIndicator } from '
 import { useState, useEffect, useRef } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
-import { getAllWords, getSettings, addXP, DictionaryWord, UserSettings, addWord } from '@/services/storageService';
-import { addWordToSRS } from '@/services/srsService';
-import { XP_REWARDS } from '@/services/xpService';
+import { getAllWords, getSettings, addXP, DictionaryWord, UserSettings, addWord, XP_REWARDS } from '@/services/storageService';
 
 interface MatchCard {
     id: string;
@@ -129,14 +127,7 @@ export default function MatchingModeScreen() {
                 // No match - shake and add word to SRS
                 setMistakes(prev => prev + 1);
 
-                // Add the word to SRS on mistake
-                const wordCard = cards.find(c => c.id === selectedCard.id || c.id === card.id);
-                if (wordCard && wordCard.type === 'word') {
-                    const meaningCard = cards.find(c => c.matchId === wordCard.matchId && c.type === 'meaning');
-                    if (meaningCard) {
-                        addWordToSRS(wordCard.text, meaningCard.text);
-                    }
-                }
+                // Word will be practiced again via normal review flow
 
                 Animated.sequence([
                     Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),

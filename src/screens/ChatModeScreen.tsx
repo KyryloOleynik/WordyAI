@@ -2,6 +2,7 @@ import { StyleSheet, Text, View, TextInput, Pressable, ScrollView, KeyboardAvoid
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
+import { getChatCompletionStream, getAPIStatus, APIStatus } from '@/services/aiService';
 import { llmManager } from '@/services/llmManager';
 import { ModelDownloadIndicator } from '@/components/ui/ModelDownloadIndicator';
 import TappableText from '@/components/ui/TappableText';
@@ -137,32 +138,20 @@ export default function ChatModeScreen() {
         setStreamingText('');
 
         try {
-            // Build chat prompt
-            const chatHistory = newMessages
-                .map(m => m.role === 'user' ? `User: ${m.content}` : `Assistant: ${m.content}`)
-                .join('\n');
-
-            const prompt = `You are an English conversation partner helping a Russian speaker practice English.
-Topic: ${selectedTopic || 'general conversation'}
-
-Previous conversation:
-${chatHistory}
-
-IMPORTANT: 
-1. If the user made grammar or vocabulary mistakes, start your response with a BRIEF correction in this format: "📝 Correction: [explain the mistake briefly]" then add a blank line.
-2. Then respond naturally to continue the conversation.
-3. Keep responses SHORT (2-3 sentences max).
-4. Be encouraging and friendly.
-
-Respond in English:`;
+            // Build messages for API
+            const chatMessages = [
+                { role: 'system' as const, content: `You are an English conversation partner helping a Russian speaker practice English. Topic: ${selectedTopic || 'general conversation'}. If the user made grammar or vocabulary mistakes, start with a BRIEF correction. Keep responses SHORT (2-3 sentences max). Be encouraging.` },
+                ...newMessages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+            ];
 
             // Create placeholder for streaming
             const assistantId = (Date.now() + 1).toString();
             let fullText = '';
 
-            // Stream the response
-            for await (const chunk of llmManager.completeStream(prompt)) {
-                fullText += chunk;
+            // Stream the response (tries Google API first, then Perplexity, then local)
+            for await (const { text, source, done } of getChatCompletionStream(chatMessages)) {
+                if (done) break;
+                fullText += text;
                 setStreamingText(fullText);
 
                 // Update message in real-time

@@ -1,20 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
+import * as db from './database';
 
-// Word interface
-export interface DictionaryWord {
-    id: string;
-    text: string;
-    definition: string;      // English explanation
-    translation: string;     // Russian translation
-    cefrLevel: string;
-    status: 'new' | 'learning' | 'known';
-    timesShown: number;
-    timesCorrect: number;
-    lastReviewedAt: number | null;
-    nextReviewAt: number;
-    source: 'manual' | 'lookup' | 'youtube';
-    createdAt: number;
-}
+// Re-export DictionaryWord from database
+export type { DictionaryWord } from './database';
 
 // User settings
 export interface UserSettings {
@@ -55,7 +44,7 @@ export interface ChatSession {
 }
 
 const STORAGE_KEYS = {
-    WORDS: '@wordy_words',
+    WORDS: '@wordy_words', // Legacy key for migration
     SETTINGS: '@wordy_settings',
     STATS: '@wordy_stats',
     CHAT_HISTORY: '@wordy_chat_history',
@@ -78,64 +67,127 @@ const DEFAULT_STATS: UserStats = {
     dailyXP: 0,
 };
 
-// ============ WORDS ============
+// Level titles for gamification
+const LEVEL_TITLES = [
+    'Beginner', 'Novice', 'Apprentice', 'Student', 'Learner',
+    'Scholar', 'Enthusiast', 'Practitioner', 'Adept', 'Expert',
+    'Master', 'Virtuoso', 'Sage', 'Guardian', 'Champion',
+    'Legend', 'Mythic', 'Transcendent', 'Immortal', 'Supreme',
+];
 
-export async function getAllWords(): Promise<DictionaryWord[]> {
-    try {
-        const data = await AsyncStorage.getItem(STORAGE_KEYS.WORDS);
-        return data ? JSON.parse(data) : [];
-    } catch (e) {
-        console.error('Error getting words:', e);
-        return [];
+export function getLevelTitle(level: number): string {
+    return LEVEL_TITLES[Math.min(level - 1, LEVEL_TITLES.length - 1)] || 'Supreme';
+}
+
+// XP rewards for different actions
+export const XP_REWARDS = {
+    WORD_CORRECT: 5,
+    WORD_CORRECT_STREAK: 8,
+    WORD_EASY: 3,
+    STORY_COMPLETE: 25,
+    STORY_PERFECT: 50,
+    TRANSLATION_CORRECT: 10,
+    CHAT_MESSAGE: 3,
+    DAILY_GOAL_COMPLETE: 15,
+    STREAK_BONUS: 5,
+};
+
+// Initialize database at app startup
+let dbInitialized = false;
+async function ensureDbInitialized(): Promise<void> {
+    if (!dbInitialized && Platform.OS !== 'web') {
+        await db.initDatabase();
+        dbInitialized = true;
     }
 }
 
-export async function addWord(word: Omit<DictionaryWord, 'id' | 'createdAt'>): Promise<DictionaryWord> {
-    const words = await getAllWords();
+// ============ WORDS (SQLite on native, AsyncStorage on web) ============
 
-    // Check if exists
-    const existing = words.find(w => w.text.toLowerCase() === word.text.toLowerCase());
-    if (existing) return existing;
+export async function getAllWords(): Promise<db.DictionaryWord[]> {
+    await ensureDbInitialized();
 
-    const newWord: DictionaryWord = {
-        ...word,
-        id: Date.now().toString(),
-        createdAt: Date.now(),
-    };
+    if (Platform.OS === 'web') {
+        // Fallback to AsyncStorage on web
+        try {
+            const data = await AsyncStorage.getItem(STORAGE_KEYS.WORDS);
+            return data ? JSON.parse(data) : [];
+        } catch (e) {
+            return [];
+        }
+    }
 
-    words.unshift(newWord);
-    await AsyncStorage.setItem(STORAGE_KEYS.WORDS, JSON.stringify(words));
-    return newWord;
+    return db.getAllWords();
 }
 
-export async function updateWord(id: string, updates: Partial<DictionaryWord>): Promise<void> {
-    const words = await getAllWords();
-    const index = words.findIndex(w => w.id === id);
-    if (index !== -1) {
-        words[index] = { ...words[index], ...updates };
+export async function addWord(word: Omit<db.DictionaryWord, 'id' | 'createdAt'>): Promise<db.DictionaryWord> {
+    await ensureDbInitialized();
+
+    if (Platform.OS === 'web') {
+        // Fallback to AsyncStorage on web
+        const words = await getAllWords();
+        const existing = words.find(w => w.text.toLowerCase() === word.text.toLowerCase());
+        if (existing) return existing;
+
+        const newWord: db.DictionaryWord = {
+            ...word,
+            id: Date.now().toString(),
+            createdAt: Date.now(),
+        };
+        words.unshift(newWord);
         await AsyncStorage.setItem(STORAGE_KEYS.WORDS, JSON.stringify(words));
+        return newWord;
     }
+
+    const result = await db.addWord(word);
+    return result || { ...word, id: Date.now().toString(), createdAt: Date.now() };
+}
+
+export async function updateWord(id: string, updates: Partial<db.DictionaryWord>): Promise<void> {
+    await ensureDbInitialized();
+
+    if (Platform.OS === 'web') {
+        const words = await getAllWords();
+        const index = words.findIndex(w => w.id === id);
+        if (index !== -1) {
+            words[index] = { ...words[index], ...updates };
+            await AsyncStorage.setItem(STORAGE_KEYS.WORDS, JSON.stringify(words));
+        }
+        return;
+    }
+
+    await db.updateWord(id, updates);
 }
 
 export async function deleteWord(id: string): Promise<void> {
-    const words = await getAllWords();
-    const filtered = words.filter(w => w.id !== id);
-    await AsyncStorage.setItem(STORAGE_KEYS.WORDS, JSON.stringify(filtered));
+    await ensureDbInitialized();
+
+    if (Platform.OS === 'web') {
+        const words = await getAllWords();
+        const filtered = words.filter(w => w.id !== id);
+        await AsyncStorage.setItem(STORAGE_KEYS.WORDS, JSON.stringify(filtered));
+        return;
+    }
+
+    await db.deleteWord(id);
 }
 
-export async function getWordsForReview(limit: number = 20): Promise<DictionaryWord[]> {
-    const words = await getAllWords();
-    const now = Date.now();
+export async function getWordsForReview(limit: number = 20): Promise<db.DictionaryWord[]> {
+    await ensureDbInitialized();
 
-    return words
-        .filter(w => w.status !== 'known' || w.nextReviewAt <= now)
-        .sort((a, b) => {
-            // Prioritize: new words first, then by nextReviewAt
-            if (a.status === 'new' && b.status !== 'new') return -1;
-            if (b.status === 'new' && a.status !== 'new') return 1;
-            return a.nextReviewAt - b.nextReviewAt;
-        })
-        .slice(0, limit);
+    if (Platform.OS === 'web') {
+        const words = await getAllWords();
+        const now = Date.now();
+        return words
+            .filter(w => w.status !== 'known' || w.nextReviewAt <= now)
+            .sort((a, b) => {
+                if (a.status === 'new' && b.status !== 'new') return -1;
+                if (b.status === 'new' && a.status !== 'new') return 1;
+                return a.nextReviewAt - b.nextReviewAt;
+            })
+            .slice(0, limit);
+    }
+
+    return db.getWordsForReview(limit);
 }
 
 // SM-2 Algorithm
@@ -163,7 +215,7 @@ export async function processReview(wordId: string, grade: 1 | 2 | 3 | 4): Promi
         intervalDays *= 2;
     }
 
-    const updates: Partial<DictionaryWord> = {
+    const updates: Partial<db.DictionaryWord> = {
         timesShown: word.timesShown + 1,
         timesCorrect: grade >= 3 ? word.timesCorrect + 1 : word.timesCorrect,
         lastReviewedAt: now,

@@ -29,8 +29,12 @@
     },
     "extra": {
       "eas": {
-        "projectId": "wordyai-production"
+        "projectId": "9a5a0479-3311-4d86-a99d-861358248646"
       }
-    }
+    },
+    "owner": "rodionoliinyk",
+    "plugins": [
+      "expo-sqlite"
+    ]
   }
 }

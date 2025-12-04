@@ -32,7 +32,8 @@ export default function TappableText({ text, style, onWordAdded }: TappableTextP
     }, []);
 
     // Split text into words while preserving spaces and punctuation
-    const tokens = text.split(/(\s+)/);
+    // Filter out empty strings that can appear at start/end
+    const tokens = text.split(/(\s+)/).filter(token => token !== '');
 
     // Get sentence context for the word (5 words before and after)
     const getSentenceContext = (tokenIndex: number): string => {

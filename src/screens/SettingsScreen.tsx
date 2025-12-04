@@ -2,8 +2,7 @@ import { StyleSheet, Text, View, ScrollView, Pressable, Switch, TextInput, Alert
 import { useState, useEffect, useCallback } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
-import { getSettings, updateSettings, getStats, UserSettings, UserStats, calculateLevel } from '@/services/storageService';
-import { getLevelTitle } from '@/services/xpService';
+import { getSettings, updateSettings, getStats, UserSettings, UserStats, calculateLevel, getLevelTitle } from '@/services/storageService';
 import {
     getAllAPIKeys,
     addAPIKey,
