@@ -510,6 +510,7 @@ const styles = StyleSheet.create({
         maxWidth: 360,
     },
     detailHeader: {
+        alignItems: 'center',
         marginBottom: spacing.xl,
     },
     detailWordRow: {
@@ -537,7 +538,6 @@ const styles = StyleSheet.create({
         fontSize: 24,
     },
     detailCefr: {
-        alignSelf: 'flex-start',
         paddingHorizontal: spacing.md,
         paddingVertical: spacing.xs,
         borderRadius: borderRadius.md,
