@@ -4,6 +4,7 @@ import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
 import { useLocalLLM } from '@/hooks/useLocalLLM';
 import { ModelDownloadIndicator } from '@/components/ui/ModelDownloadIndicator';
+import { VolumetricButton, SuccessAnimation } from '@/components/ui/SharedComponents';
 import { addXP } from '@/services/storageService';
 import { XP_REWARDS } from '@/services/xpService';
 import { generateRussianSentence, calculateTranslationAccuracy } from '@/services/aiService';
@@ -298,9 +299,13 @@ export default function TranslationModeScreen() {
                         <Pressable style={styles.skipButton} onPress={changeLevel}>
                             <Text style={styles.skipButtonText}>Изменить уровень</Text>
                         </Pressable>
-                        <Pressable style={styles.primaryButton} onPress={nextExercise}>
-                            <Text style={styles.primaryButtonText}>Следующее →</Text>
-                        </Pressable>
+                        <View style={{ flex: 1 }}>
+                            <VolumetricButton
+                                title="Следующее →"
+                                variant={result.accuracy >= 70 ? 'success' : 'primary'}
+                                onPress={nextExercise}
+                            />
+                        </View>
                     </View>
                 </ScrollView>
             </View>

@@ -1,44 +1,47 @@
 // src/lib/nlp/filter.ts
+// Word filtering using classification service
 
-// In a real app, this would be imported from a large JSON asset
-const MOCK_FREQ_LIST: Record<string, number> = {
-    "the": 1,
-    "be": 2,
-    "to": 3,
-    "of": 4,
-    "and": 5,
-    "a": 6,
-    "in": 7,
-    "that": 8,
-    "have": 9,
-    "i": 10,
-    "ephemeral": 15000,
-    "serendipity": 18000,
-    "quantum": 12000,
-    "algorithm": 8000,
-    "react": 5000,
+import { classifyWord, filterWordsByLevel as filterByLevel } from '@/services/wordClassificationService';
+
+export type CEFRLevel = 'A1-A2' | 'B1-B2' | 'C1-C2';
+
+/**
+ * Extract and filter words from text by CEFR level
+ */
+export const filterWordsByLevel = async (
+    text: string,
+    targetLevel: CEFRLevel
+): Promise<string[]> => {
+    // Tokenize text
+    const tokens = text.match(/\b[a-zA-Z]{3,}\b/g) || [];
+
+    // Get unique words
+    const uniqueWords = [...new Set(tokens.map(w => w.toLowerCase()))];
+
+    // Filter by level using classification service
+    return filterByLevel(uniqueWords, targetLevel);
 };
 
-export const filterWordsByLevel = (
+/**
+ * Extract words above user's known level
+ */
+export const extractNewWords = async (
     text: string,
-    userKnownRank: number
-): string[] => {
-    // Simple regex to tokenize words (removes punctuation)
-    const tokens = text.match(/\b[a-zA-Z]+\b/g) || [];
-    const candidates = new Set<string>();
+    userLevel: CEFRLevel
+): Promise<string[]> => {
+    const tokens = text.match(/\b[a-zA-Z]{3,}\b/g) || [];
+    const uniqueWords = [...new Set(tokens.map(w => w.toLowerCase()))];
 
-    tokens.forEach(word => {
-        const lowerWord = word.toLowerCase();
-        const rank = MOCK_FREQ_LIST[lowerWord];
+    const results: string[] = [];
+    const levelOrder = { 'A1-A2': 0, 'B1-B2': 1, 'C1-C2': 2 };
+    const userLevelNum = levelOrder[userLevel];
 
-        // Logic: 
-        // 1. Must be in our frequency list (valid word)
-        // 2. Rank > userKnownRank (User doesn't know it yet)
-        // 3. Rank < 20000 (Not too obscure/archaic)
-        if (rank && rank > userKnownRank && rank < 20000) {
-            candidates.add(lowerWord);
+    for (const word of uniqueWords) {
+        const classification = await classifyWord(word);
+        if (levelOrder[classification.level] > userLevelNum) {
+            results.push(word);
         }
-    });
+    }
 
-    return Array.from(candidates);
+    return results;
 };

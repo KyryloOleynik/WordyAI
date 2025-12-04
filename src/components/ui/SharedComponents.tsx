@@ -487,3 +487,281 @@ const loadingStyles = StyleSheet.create({
         color: colors.text.secondary,
     },
 });
+
+// ============= STREAK ANIMATION =============
+
+interface StreakAnimationProps {
+    visible: boolean;
+    streakCount: number;
+    onComplete?: () => void;
+}
+
+export function StreakAnimation({ visible, streakCount, onComplete }: StreakAnimationProps) {
+    const scaleAnim = useRef(new Animated.Value(0)).current;
+    const rotateAnim = useRef(new Animated.Value(0)).current;
+    const opacityAnim = useRef(new Animated.Value(0)).current;
+    const flameScaleAnim = useRef(new Animated.Value(1)).current;
+
+    useEffect(() => {
+        if (visible) {
+            scaleAnim.setValue(0);
+            rotateAnim.setValue(0);
+            opacityAnim.setValue(0);
+            flameScaleAnim.setValue(1);
+
+            // Fire pulse animation
+            const flame = Animated.loop(
+                Animated.sequence([
+                    Animated.timing(flameScaleAnim, { toValue: 1.2, duration: 300, useNativeDriver: true }),
+                    Animated.timing(flameScaleAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
+                ]),
+                { iterations: 4 }
+            );
+
+            Animated.parallel([
+                Animated.spring(scaleAnim, {
+                    toValue: 1,
+                    tension: 80,
+                    friction: 6,
+                    useNativeDriver: true,
+                }),
+                Animated.timing(opacityAnim, {
+                    toValue: 1,
+                    duration: 200,
+                    useNativeDriver: true,
+                }),
+                Animated.timing(rotateAnim, {
+                    toValue: 1,
+                    duration: 600,
+                    useNativeDriver: true,
+                }),
+                flame,
+            ]).start();
+
+            setTimeout(() => {
+                Animated.timing(opacityAnim, {
+                    toValue: 0,
+                    duration: 300,
+                    useNativeDriver: true,
+                }).start(() => onComplete?.());
+            }, 2500);
+        }
+    }, [visible]);
+
+    if (!visible) return null;
+
+    const rotate = rotateAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ['-10deg', '0deg'],
+    });
+
+    return (
+        <View style={streakStyles.overlay}>
+            <Animated.View style={[
+                streakStyles.container,
+                {
+                    transform: [{ scale: scaleAnim }, { rotate }],
+                    opacity: opacityAnim,
+                }
+            ]}>
+                <Animated.Text style={[
+                    streakStyles.fire,
+                    { transform: [{ scale: flameScaleAnim }] }
+                ]}>
+                    🔥
+                </Animated.Text>
+                <Text style={streakStyles.count}>{streakCount}</Text>
+                <Text style={streakStyles.label}>дней подряд!</Text>
+                <View style={streakStyles.glow} />
+            </Animated.View>
+        </View>
+    );
+}
+
+const streakStyles = StyleSheet.create({
+    overlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.8)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 1000,
+    },
+    container: {
+        alignItems: 'center',
+        padding: spacing.xxl,
+    },
+    fire: {
+        fontSize: 80,
+        marginBottom: spacing.md,
+    },
+    count: {
+        fontSize: 64,
+        fontWeight: '800',
+        color: colors.accent.amber,
+        marginBottom: spacing.xs,
+    },
+    label: {
+        ...typography.h3,
+        color: colors.text.inverse,
+    },
+    glow: {
+        position: 'absolute',
+        width: 200,
+        height: 200,
+        borderRadius: 100,
+        backgroundColor: colors.accent.amber,
+        opacity: 0.2,
+        zIndex: -1,
+    },
+});
+
+// ============= VOLUMETRIC BUTTON (3D Effect) =============
+
+interface VolumetricButtonProps {
+    title: string;
+    onPress: () => void;
+    disabled?: boolean;
+    loading?: boolean;
+    variant?: 'primary' | 'success' | 'amber';
+    icon?: string;
+    size?: 'normal' | 'large';
+}
+
+export function VolumetricButton({
+    title,
+    onPress,
+    disabled,
+    loading,
+    variant = 'primary',
+    icon,
+    size = 'normal',
+}: VolumetricButtonProps) {
+    const scaleAnim = useRef(new Animated.Value(1)).current;
+    const translateYAnim = useRef(new Animated.Value(0)).current;
+
+    const getColors = () => {
+        switch (variant) {
+            case 'success':
+                return {
+                    top: colors.accent.green,
+                    bottom: '#1a6534',
+                    text: colors.text.inverse,
+                };
+            case 'amber':
+                return {
+                    top: colors.accent.amber,
+                    bottom: '#8B5A00',
+                    text: colors.text.inverse,
+                };
+            default:
+                return {
+                    top: colors.primary[300],
+                    bottom: colors.primary[700],
+                    text: colors.text.inverse,
+                };
+        }
+    };
+
+    const colorScheme = getColors();
+
+    const handlePressIn = () => {
+        Animated.parallel([
+            Animated.timing(scaleAnim, { toValue: 0.97, duration: 100, useNativeDriver: true }),
+            Animated.timing(translateYAnim, { toValue: 3, duration: 100, useNativeDriver: true }),
+        ]).start();
+    };
+
+    const handlePressOut = () => {
+        Animated.parallel([
+            Animated.spring(scaleAnim, { toValue: 1, tension: 200, friction: 10, useNativeDriver: true }),
+            Animated.spring(translateYAnim, { toValue: 0, tension: 200, friction: 10, useNativeDriver: true }),
+        ]).start();
+    };
+
+    return (
+        <Pressable
+            onPress={onPress}
+            onPressIn={handlePressIn}
+            onPressOut={handlePressOut}
+            disabled={disabled || loading}
+        >
+            <Animated.View style={[
+                volumetricStyles.wrapper,
+                { transform: [{ scale: scaleAnim }] },
+                disabled && { opacity: 0.5 },
+            ]}>
+                {/* Shadow/Bottom layer */}
+                <View style={[
+                    volumetricStyles.shadow,
+                    { backgroundColor: colorScheme.bottom },
+                    size === 'large' && volumetricStyles.shadowLarge,
+                ]} />
+                {/* Top button */}
+                <Animated.View style={[
+                    volumetricStyles.button,
+                    { backgroundColor: colorScheme.top, transform: [{ translateY: translateYAnim }] },
+                    size === 'large' && volumetricStyles.buttonLarge,
+                ]}>
+                    <View style={volumetricStyles.highlight} />
+                    {icon && <Text style={volumetricStyles.icon}>{icon}</Text>}
+                    <Text style={[volumetricStyles.text, { color: colorScheme.text }, size === 'large' && volumetricStyles.textLarge]}>
+                        {loading ? 'Загрузка...' : title}
+                    </Text>
+                </Animated.View>
+            </Animated.View>
+        </Pressable>
+    );
+}
+
+const volumetricStyles = StyleSheet.create({
+    wrapper: {
+        position: 'relative',
+    },
+    shadow: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        height: 52,
+        borderRadius: borderRadius.xl,
+    },
+    shadowLarge: {
+        height: 64,
+    },
+    button: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: spacing.lg,
+        paddingHorizontal: spacing.xxl,
+        borderRadius: borderRadius.xl,
+        gap: spacing.sm,
+        position: 'relative',
+        overflow: 'hidden',
+    },
+    buttonLarge: {
+        paddingVertical: spacing.xl,
+        paddingHorizontal: spacing.xxxl,
+    },
+    highlight: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        height: '50%',
+        backgroundColor: 'rgba(255,255,255,0.15)',
+        borderTopLeftRadius: borderRadius.xl,
+        borderTopRightRadius: borderRadius.xl,
+    },
+    icon: {
+        fontSize: 22,
+    },
+    text: {
+        ...typography.bodyBold,
+        fontSize: 16,
+    },
+    textLarge: {
+        fontSize: 18,
+    },
+});
+

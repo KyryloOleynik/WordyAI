@@ -326,6 +326,13 @@ Respond in English:`;
                             message.role === 'user' ? styles.userBubble : styles.assistantBubble,
                         ]}
                     >
+                        {/* Corrections box for user errors */}
+                        {message.corrections && (
+                            <View style={styles.correctionsBox}>
+                                <Text style={styles.correctionsLabel}>⚠️ Исправления:</Text>
+                                <Text style={styles.correctionsText}>{message.corrections}</Text>
+                            </View>
+                        )}
                         {message.role === 'assistant' ? (
                             <TappableText
                                 text={message.content}
@@ -515,12 +522,12 @@ const styles = StyleSheet.create({
         ...typography.body,
         color: colors.text.primary,
         maxHeight: 100,
-    },
+    } as any,
     sendButton: {
         backgroundColor: colors.primary[300],
-        borderRadius: borderRadius.full,
+        borderRadius: borderRadius.lg,
         width: 48,
-        height: 48,
+        height: '100%',
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -530,5 +537,24 @@ const styles = StyleSheet.create({
     sendButtonText: {
         color: colors.text.inverse,
         fontSize: 20,
+    },
+    // Corrections styling
+    correctionsBox: {
+        backgroundColor: `${colors.accent.amber}20`,
+        borderWidth: 1,
+        borderColor: colors.accent.amber,
+        borderRadius: borderRadius.lg,
+        padding: spacing.md,
+        marginBottom: spacing.md,
+    },
+    correctionsLabel: {
+        ...typography.caption,
+        color: colors.accent.amber,
+        fontWeight: '700',
+        marginBottom: spacing.xs,
+    },
+    correctionsText: {
+        ...typography.bodySmall,
+        color: colors.text.primary,
     },
 });

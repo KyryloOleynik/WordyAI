@@ -34,17 +34,17 @@ const XP_PER_LEVEL = [
     48000,  // Level 20
 ];
 
-// XP rewards
+// XP rewards (reduced by 2x)
 export const XP_REWARDS = {
-    WORD_CORRECT: 10,
-    WORD_CORRECT_STREAK: 15, // If answered correctly in a row
-    WORD_EASY: 5,
-    STORY_COMPLETE: 50,
-    STORY_PERFECT: 100,
-    TRANSLATION_CORRECT: 20,
-    CHAT_MESSAGE: 5,
-    DAILY_GOAL_COMPLETE: 30,
-    STREAK_BONUS: 10, // Per day of streak
+    WORD_CORRECT: 5,
+    WORD_CORRECT_STREAK: 8,
+    WORD_EASY: 3,
+    STORY_COMPLETE: 25,
+    STORY_PERFECT: 50,
+    TRANSLATION_CORRECT: 10,
+    CHAT_MESSAGE: 3,
+    DAILY_GOAL_COMPLETE: 15,
+    STREAK_BONUS: 5,
 };
 
 export function calculateLevel(totalXP: number): number {

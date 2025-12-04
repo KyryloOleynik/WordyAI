@@ -5,7 +5,7 @@ import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
 import { fetchYouTubeSubtitles } from '@/features/ingestion/youtubeService';
-import { filterWordsByLevel } from '@/lib/nlp/filter';
+import { extractNewWords, CEFRLevel } from '@/lib/nlp/filter';
 import { getSettings, addWord } from '@/services/storageService';
 import { translateWords } from '@/services/translationService';
 
@@ -43,21 +43,21 @@ export default function YouTubeIngestionScreen() {
             const settings = await getSettings();
             const userLevel = settings.cefrLevel;
 
-            // Map CEFR level to frequency threshold
-            const levelThresholds: Record<string, number> = {
-                'A1': 500,
-                'A2': 1500,
-                'B1': 3500,
-                'B2': 6000,
-                'C1': 10000,
-                'C2': 20000,
+            // Map user level to CEFR range
+            const levelMap: Record<string, CEFRLevel> = {
+                'A1': 'A1-A2',
+                'A2': 'A1-A2',
+                'B1': 'B1-B2',
+                'B2': 'B1-B2',
+                'C1': 'C1-C2',
+                'C2': 'C1-C2',
             };
-            const threshold = levelThresholds[userLevel] || 3500;
+            const cefrLevel = levelMap[userLevel] || 'B1-B2';
 
-            // Filter words by user level
-            const words = filterWordsByLevel(videoInfo.fullText, threshold);
+            // Extract words above user's level using classification service
+            const words = await extractNewWords(videoInfo.fullText, cefrLevel);
 
-            setExtractedWords(words);
+            setExtractedWords(words.slice(0, 50)); // Limit to 50 words
         } catch (error) {
             Alert.alert(
                 'Error',

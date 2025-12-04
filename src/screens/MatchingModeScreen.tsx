@@ -2,7 +2,8 @@ import { StyleSheet, Text, View, Pressable, Animated, ActivityIndicator } from '
 import { useState, useEffect, useRef } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
-import { getAllWords, getSettings, addXP, DictionaryWord, UserSettings } from '@/services/storageService';
+import { getAllWords, getSettings, addXP, DictionaryWord, UserSettings, addWord } from '@/services/storageService';
+import { addWordToSRS } from '@/services/srsService';
 import { XP_REWARDS } from '@/services/xpService';
 
 interface MatchCard {
@@ -12,6 +13,7 @@ interface MatchCard {
     type: 'word' | 'meaning';
     isSelected: boolean;
     isMatched: boolean;
+    translation?: string; // For SRS
 }
 
 // Difficulty settings per round
@@ -124,8 +126,18 @@ export default function MatchingModeScreen() {
                 setSelectedCard(null);
                 // Round completion handled in useEffect
             } else {
-                // No match - shake and reset
+                // No match - shake and add word to SRS
                 setMistakes(prev => prev + 1);
+
+                // Add the word to SRS on mistake
+                const wordCard = cards.find(c => c.id === selectedCard.id || c.id === card.id);
+                if (wordCard && wordCard.type === 'word') {
+                    const meaningCard = cards.find(c => c.matchId === wordCard.matchId && c.type === 'meaning');
+                    if (meaningCard) {
+                        addWordToSRS(wordCard.text, meaningCard.text);
+                    }
+                }
+
                 Animated.sequence([
                     Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
                     Animated.timing(shakeAnim, { toValue: -10, duration: 50, useNativeDriver: true }),
@@ -352,27 +364,48 @@ const styles = StyleSheet.create({
         minHeight: 60,
         justifyContent: 'center',
         alignItems: 'center',
-        borderWidth: 2,
-        borderColor: 'transparent',
+        // Volumetric 3D effect
+        borderTopWidth: 1,
+        borderLeftWidth: 1,
+        borderTopColor: 'rgba(255,255,255,0.1)',
+        borderLeftColor: 'rgba(255,255,255,0.05)',
+        borderBottomWidth: 4,
+        borderRightWidth: 2,
+        borderBottomColor: 'rgba(0,0,0,0.3)',
+        borderRightColor: 'rgba(0,0,0,0.15)',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 6,
+        elevation: 6,
     },
     cardSelected: {
-        borderColor: colors.primary[300],
-        backgroundColor: `${colors.primary[300]}20`,
+        backgroundColor: colors.primary[300],
+        borderBottomColor: colors.primary[400],
+        borderRightColor: colors.primary[400],
+        transform: [{ scale: 1.02 }],
     },
     cardMatched: {
-        backgroundColor: `${colors.accent.green}20`,
+        backgroundColor: `${colors.accent.green}30`,
         borderColor: colors.accent.green,
+        borderWidth: 2,
+        transform: [{ scale: 0.98 }],
+        opacity: 0.8,
     },
     cardText: {
         ...typography.body,
         color: colors.text.primary,
         textAlign: 'center',
+        fontWeight: '600',
     },
     meaningText: {
         ...typography.bodySmall,
     },
     cardTextMatched: {
         color: colors.accent.green,
+    },
+    cardTextSelected: {
+        color: colors.text.inverse,
     },
     progressContainer: {
         padding: spacing.lg,
