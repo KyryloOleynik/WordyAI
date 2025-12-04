@@ -25,18 +25,8 @@
     },
     "web": {
       "bundler": "metro",
-      "output": "static",
       "favicon": "./assets/favicon.png"
     },
-    "plugins": [
-      "expo-router",
-      [
-        "expo-splash-screen",
-        {
-          "backgroundColor": "#0A0A0F"
-        }
-      ]
-    ],
     "extra": {
       "eas": {
         "projectId": "wordyai-production"
