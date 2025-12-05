@@ -774,11 +774,27 @@ interface ExerciseHeaderProps {
 }
 
 export function ExerciseHeader({ progress, xpEarned, onBack }: ExerciseHeaderProps) {
+    const progressAnim = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        Animated.spring(progressAnim, {
+            toValue: progress,
+            tension: 50,
+            friction: 10,
+            useNativeDriver: false,
+        }).start();
+    }, [progress]);
+
+    const progressWidth = progressAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ['0%', '100%'],
+    });
+
     return (
         <View style={exerciseHeaderStyles.container}>
             <View style={exerciseHeaderStyles.progressContainer}>
                 <View style={exerciseHeaderStyles.progressTrack}>
-                    <View style={[exerciseHeaderStyles.progressBar, { width: `${progress * 100}%` }]} />
+                    <Animated.View style={[exerciseHeaderStyles.progressBar, { width: progressWidth }]} />
                 </View>
             </View>
             <View style={exerciseHeaderStyles.xpBadge}>
@@ -882,60 +898,705 @@ const wrongFlashStyles = StyleSheet.create({
     },
 });
 
-// ============= SHARED MATCHING CARD STYLES =============
+// ============= MATCHING GAME COMPONENT =============
 
-export const matchingCardStyles = StyleSheet.create({
+export interface MatchingWord {
+    id: string;
+    text: string;
+    translation: string;
+}
+
+interface MatchCard {
+    id: string;
+    text: string;
+    matchId: string;
+    type: 'word' | 'meaning';
+    isSelected: boolean;
+    isMatched: boolean;
+    isFading: boolean;
+    opacity: Animated.Value;
+}
+
+interface MatchingGameProps {
+    words: MatchingWord[];
+    showTranslation?: boolean;
+    onMatch: (wordId: string, isCorrect: boolean) => void;
+    onComplete: (score: number, mistakes: number) => void;
+    totalMatches?: number;
+    visiblePairs?: number;
+    showProgressBar?: boolean;
+}
+
+export function MatchingGame({
+    words,
+    showTranslation = true,
+    onMatch,
+    onComplete,
+    totalMatches = 10,
+    visiblePairs = 5,
+    showProgressBar = true,
+}: MatchingGameProps) {
+    const [visibleCards, setVisibleCards] = useState<MatchCard[]>([]);
+    const [wordPool, setWordPool] = useState<MatchingWord[]>([]);
+    const [nextWordIndex, setNextWordIndex] = useState(visiblePairs);
+    const [selectedCard, setSelectedCard] = useState<MatchCard | null>(null);
+    const [completedMatches, setCompletedMatches] = useState(0);
+    const [mistakes, setMistakes] = useState(0);
+    const [score, setScore] = useState(0);
+    const shakeAnim = useRef(new Animated.Value(0)).current;
+    const progressAnim = useRef(new Animated.Value(0)).current;
+
+    // Initialize game
+    useEffect(() => {
+        // Strict deduplication to prevent recurring words
+        const seen = new Set<string>();
+        const uniqueWords = words.filter(w => {
+            const txt = w.text.toLowerCase().trim();
+            if (seen.has(txt)) return false;
+            seen.add(txt);
+            return true;
+        });
+
+        const shuffled = [...uniqueWords].sort(() => Math.random() - 0.5).slice(0, totalMatches);
+        setWordPool(shuffled);
+        createVisibleCards(shuffled.slice(0, visiblePairs));
+        setNextWordIndex(visiblePairs);
+
+        // Reset game state for new round
+        setCompletedMatches(0);
+        setMistakes(0);
+        setScore(0);
+        setMatchedQueue([]);
+    }, [words, visiblePairs, totalMatches]);
+
+    // Animate progress
+    useEffect(() => {
+        const progress = completedMatches / totalMatches;
+        Animated.spring(progressAnim, {
+            toValue: progress,
+            tension: 50,
+            friction: 10,
+            useNativeDriver: false,
+        }).start();
+
+        if (completedMatches >= totalMatches) {
+            setTimeout(() => onComplete(score, mistakes), 500);
+        }
+    }, [completedMatches, totalMatches, score, mistakes]);
+
+    const createVisibleCards = (selectedWords: MatchingWord[]) => {
+        const wordCards: MatchCard[] = selectedWords.map(w => ({
+            id: `word-${w.id}`,
+            text: w.text,
+            matchId: w.id,
+            type: 'word' as const,
+            isSelected: false,
+            isMatched: false,
+            isFading: false,
+            opacity: new Animated.Value(1),
+        }));
+
+        const meaningCards: MatchCard[] = selectedWords.map(w => ({
+            id: `meaning-${w.id}`,
+            text: w.translation,
+            matchId: w.id,
+            type: 'meaning' as const,
+            isSelected: false,
+            isMatched: false,
+            isFading: false,
+            opacity: new Animated.Value(1),
+        }));
+
+        setVisibleCards([
+            ...wordCards.sort(() => Math.random() - 0.5),
+            ...meaningCards.sort(() => Math.random() - 0.5),
+        ]);
+        setSelectedCard(null);
+    };
+
+    const [matchedQueue, setMatchedQueue] = useState<string[]>([]);
+
+    const triggerRefillFor = (matchIdToReplace: string) => {
+        if (nextWordIndex >= wordPool.length) {
+            // No more words? REQUIREMENT: Matched cards stay visible on screen.
+            // Do not fade out. Do not replace. Just return.
+            return;
+        }
+
+        const nextWord = wordPool[nextWordIndex];
+        setNextWordIndex(prev => prev + 1);
+
+        const newWordCard: MatchCard = {
+            id: `word-${nextWord.id}`,
+            text: nextWord.text,
+            matchId: nextWord.id,
+            type: 'word',
+            isSelected: false,
+            isMatched: false,
+            isFading: false,
+            opacity: new Animated.Value(0),
+        };
+
+        const newMeaningCard: MatchCard = {
+            id: `meaning-${nextWord.id}`,
+            text: nextWord.translation,
+            matchId: nextWord.id,
+            type: 'meaning',
+            isSelected: false,
+            isMatched: false,
+            isFading: false,
+            opacity: new Animated.Value(0),
+        };
+
+        // Fade out old cards
+        const oldCards = visibleCards.filter(c => c.matchId === matchIdToReplace);
+        Animated.parallel(
+            oldCards.map(c =>
+                Animated.timing(c.opacity, { toValue: 0, duration: 400, useNativeDriver: true })
+            )
+        ).start(() => {
+            // After fade out, replace data
+            setVisibleCards(prev => {
+                return prev.map(card => {
+                    if (card.matchId === matchIdToReplace && card.type === 'word') return newWordCard;
+                    if (card.matchId === matchIdToReplace && card.type === 'meaning') return newMeaningCard;
+                    return card;
+                });
+            });
+
+            // Fade in new cards
+            setTimeout(() => {
+                Animated.parallel([
+                    Animated.timing(newWordCard.opacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+                    Animated.timing(newMeaningCard.opacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+                ]).start();
+            }, 50);
+        });
+    };
+
+    const handleCardPress = (card: MatchCard) => {
+        if (card.isMatched || card.isFading) return;
+
+        if (!selectedCard) {
+            // First selection
+            setSelectedCard(card);
+            setVisibleCards(prev => prev.map(c =>
+                c.id === card.id ? { ...c, isSelected: true } : c
+            ));
+        } else if (selectedCard.id === card.id) {
+            // Deselect
+            setSelectedCard(null);
+            setVisibleCards(prev => prev.map(c =>
+                c.id === card.id ? { ...c, isSelected: false } : c
+            ));
+        } else {
+            // Second selection
+            if (selectedCard.matchId === card.matchId && selectedCard.type !== card.type) {
+                // CORRECT MATCH!
+                const newScore = score + 1;
+                setScore(prev => prev + 1);
+                setCompletedMatches(prev => prev + 1);
+                setSelectedCard(null);
+                onMatch(card.matchId, true);
+
+                // Update cards to matched state
+                setVisibleCards(prev => prev.map(c =>
+                    c.matchId === card.matchId
+                        ? { ...c, isMatched: true, isSelected: false }
+                        : c
+                ));
+
+                // Add to queue and manage refill
+                setMatchedQueue(prevQueue => {
+                    const newQueue = [...prevQueue, card.matchId];
+                    if (newQueue.length >= 2) {
+                        // We have 2 matches, time to remove the OLDEST one (index 0)
+                        const oldestMatchId = newQueue[0];
+                        // Trigger refill for the oldest match
+                        triggerRefillFor(oldestMatchId);
+                        // Return queue with oldest removed
+                        return newQueue.slice(1);
+                    }
+                    return newQueue;
+                });
+
+            } else {
+                // WRONG MATCH
+                setMistakes(prev => prev + 1);
+                onMatch(selectedCard.matchId, false);
+
+                Animated.sequence([
+                    Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
+                    Animated.timing(shakeAnim, { toValue: -10, duration: 50, useNativeDriver: true }),
+                    Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
+                    Animated.timing(shakeAnim, { toValue: 0, duration: 50, useNativeDriver: true }),
+                ]).start();
+
+                setTimeout(() => {
+                    setVisibleCards(prev => prev.map(c => ({ ...c, isSelected: false })));
+                    setSelectedCard(null);
+                }, 300);
+            }
+        }
+    };
+
+    const wordCards = visibleCards.filter(c => c.type === 'word');
+    const meaningCards = visibleCards.filter(c => c.type === 'meaning');
+    const progressWidth = progressAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ['0%', '100%'],
+    });
+
+    return (
+        <View style={matchingStyles.container}>
+            {/* Game Grid */}
+            <View style={matchingStyles.gameContainer}>
+                <Animated.View style={[matchingStyles.column, { transform: [{ translateX: shakeAnim }] }]}>
+                    <Text style={matchingStyles.columnTitle}>English</Text>
+                    {wordCards.map(card => (
+                        <Animated.View key={card.id} style={{ opacity: card.opacity }}>
+                            <Pressable
+                                style={[
+                                    matchingStyles.card,
+                                    card.isSelected && matchingStyles.cardSelected,
+                                    card.isMatched && matchingStyles.cardMatched,
+                                ]}
+                                onPress={() => handleCardPress(card)}
+                                disabled={card.isMatched || card.isFading}
+                            >
+                                <Text style={[
+                                    matchingStyles.cardText,
+                                    card.isMatched && matchingStyles.cardTextMatched,
+                                ]}>
+                                    {card.text}
+                                </Text>
+                            </Pressable>
+                        </Animated.View>
+                    ))}
+                </Animated.View>
+
+                <Animated.View style={[matchingStyles.column, { transform: [{ translateX: shakeAnim }] }]}>
+                    <Text style={matchingStyles.columnTitle}>
+                        {showTranslation ? 'Русский' : 'Definition'}
+                    </Text>
+                    {meaningCards.map(card => (
+                        <Animated.View key={card.id} style={{ opacity: card.opacity }}>
+                            <Pressable
+                                style={[
+                                    matchingStyles.card,
+                                    card.isSelected && matchingStyles.cardSelected,
+                                    card.isMatched && matchingStyles.cardMatched,
+                                ]}
+                                onPress={() => handleCardPress(card)}
+                                disabled={card.isMatched || card.isFading}
+                            >
+                                <Text style={[
+                                    matchingStyles.cardText,
+                                    matchingStyles.meaningText,
+                                    card.isMatched && matchingStyles.cardTextMatched,
+                                ]} numberOfLines={3}>
+                                    {card.text}
+                                </Text>
+                            </Pressable>
+                        </Animated.View>
+                    ))}
+                </Animated.View>
+            </View>
+
+            {/* Progress Bar at bottom */}
+            {showProgressBar && (
+                <View style={matchingStyles.progressContainer}>
+                    <View style={matchingStyles.progressTrack}>
+                        <Animated.View style={[matchingStyles.progressBar, { width: progressWidth }]} />
+                    </View>
+                    <Text style={matchingStyles.progressText}>
+                        {completedMatches}/{totalMatches}
+                    </Text>
+                </View>
+            )}
+        </View>
+    );
+}
+
+const matchingStyles = StyleSheet.create({
     container: {
+        flex: 1,
+    },
+    gameContainer: {
+        flex: 1,
         flexDirection: 'row',
+        paddingHorizontal: spacing.md,
+        paddingTop: spacing.sm,
         gap: spacing.md,
     },
     column: {
         flex: 1,
         gap: spacing.sm,
     },
-    label: {
+    columnTitle: {
         ...typography.caption,
         color: colors.text.tertiary,
         textAlign: 'center',
+        textTransform: 'uppercase',
         marginBottom: spacing.xs,
+        letterSpacing: 1,
     },
     card: {
         backgroundColor: colors.surface,
         borderRadius: borderRadius.lg,
         padding: spacing.md,
+        height: 60, // Fixed height for uniformity
+        justifyContent: 'center',
+        alignItems: 'center',
         borderWidth: 2,
         borderColor: colors.border.light,
         borderBottomWidth: 4,
         borderBottomColor: colors.border.medium,
-        minHeight: 55,
-        maxHeight: 70,
-        justifyContent: 'center',
-        alignItems: 'center',
     },
-    cardActive: {
-        borderColor: colors.primary[300],
-        backgroundColor: `${colors.primary[300]}15`,
-        transform: [{ scale: 1.02 }],
-    },
-    cardHighlight: {
-        borderColor: colors.accent.amber,
-        borderStyle: 'dashed',
+    // GREEN BORDER ONLY when selected (not filled)
+    cardSelected: {
+        borderColor: colors.accent.green,
+        borderWidth: 3,
+        borderBottomWidth: 5,
+        borderBottomColor: colors.accent.green,
     },
     cardMatched: {
+        backgroundColor: `${colors.accent.green}20`,
         borderColor: colors.accent.green,
-        backgroundColor: `${colors.accent.green}15`,
-        opacity: 0.7,
-    },
-    cardSelected: {
-        borderColor: colors.primary[300],
-        backgroundColor: `${colors.primary[300]}10`,
+        opacity: 0.8,
     },
     cardText: {
-        ...typography.body,
+        ...typography.bodySmall,
         color: colors.text.primary,
         textAlign: 'center',
+        fontWeight: '600',
+    },
+    meaningText: {
+        fontSize: 13,
     },
     cardTextMatched: {
+        color: colors.accent.green,
+    },
+    progressContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: spacing.lg,
+        paddingVertical: spacing.md,
+        backgroundColor: colors.surface,
+        borderTopWidth: 1,
+        borderTopColor: colors.border.light,
+        gap: spacing.md,
+    },
+    progressTrack: {
+        flex: 1,
+        height: 8,
+        backgroundColor: colors.surfaceElevated,
+        borderRadius: 4,
+        overflow: 'hidden',
+    },
+    progressBar: {
+        height: '100%',
+        backgroundColor: colors.primary[300],
+        borderRadius: 4,
+    },
+    progressText: {
+        ...typography.caption,
+        color: colors.text.secondary,
+        fontWeight: '700',
+        minWidth: 40,
+        textAlign: 'right',
+    },
+});
+
+// Legacy styles export for backward compatibility
+export const matchingCardStyles = matchingStyles;
+
+// ============= COMPLETION SCREEN =============
+
+export interface CompletionScreenProps {
+    score: number;
+    total: number;
+    xpEarned: number;
+    onRestart: () => void;
+    onHome: () => void;
+    title?: string;
+    message?: string;
+    newWordsCount?: number;
+}
+
+export function CompletionScreen({
+    score,
+    total,
+    xpEarned,
+    onRestart,
+    onHome,
+    title = 'Урок завершён!',
+    message,
+    newWordsCount = 0
+}: CompletionScreenProps) {
+    const percentage = total > 0 ? Math.round((score / total) * 100) : 100;
+
+    // Determine emoji and color based on score
+    let emoji = '🎉';
+    let color = colors.accent.green;
+    let defaultMsg = 'Отлично! Вы справились!';
+
+    if (percentage < 50) {
+        emoji = '📝';
+        color = colors.accent.amber;
+        defaultMsg = 'Хорошая попытка! Продолжайте практиковаться.';
+    } else if (percentage < 80) {
+        emoji = '👍';
+        color = colors.primary[300];
+        defaultMsg = 'Хорошая работа!';
+    }
+
+    return (
+        <View style={completionStyles.container}>
+            <View style={completionStyles.card}>
+                <Text style={completionStyles.emoji}>{emoji}</Text>
+                <Text style={completionStyles.title}>{title}</Text>
+
+                <Text style={[completionStyles.score, { color }]}>
+                    {score}/{total} правильно ({percentage}%)
+                </Text>
+
+                <View style={completionStyles.xpBadge}>
+                    <Text style={completionStyles.xpText}>+{xpEarned} XP</Text>
+                </View>
+
+                {newWordsCount > 0 && (
+                    <Text style={completionStyles.newWords}>
+                        📚 +{newWordsCount} новых слов в словаре
+                    </Text>
+                )}
+
+                <Text style={completionStyles.message}>
+                    {message || defaultMsg}
+                </Text>
+
+                <View style={completionStyles.buttons}>
+                    <VolumetricButton
+                        title="Ещё раз"
+                        onPress={onRestart}
+                        variant={percentage >= 50 ? 'success' : 'primary'}
+                    />
+                    <View style={{ height: spacing.md }} />
+                    <VolumetricButton
+                        title="На главную"
+                        onPress={onHome}
+                        variant="amber"
+                    />
+                </View>
+            </View>
+        </View>
+    );
+}
+
+const completionStyles = StyleSheet.create({
+    container: {
+        flex: 1,
+        padding: spacing.lg,
+        justifyContent: 'center',
+        backgroundColor: colors.background,
+    },
+    card: {
+        backgroundColor: colors.surface,
+        borderRadius: borderRadius.xxl,
+        padding: spacing.xxl,
+        alignItems: 'center',
+    },
+    emoji: {
+        fontSize: 64,
+        marginBottom: spacing.md,
+    },
+    title: {
+        ...typography.h2,
+        color: colors.text.primary,
+        marginBottom: spacing.xs,
+        textAlign: 'center',
+    },
+    score: {
+        ...typography.h3,
+        marginBottom: spacing.lg,
+        fontWeight: '800',
+    },
+    xpBadge: {
+        backgroundColor: colors.accent.amber,
+        paddingHorizontal: spacing.xl,
+        paddingVertical: spacing.md,
+        borderRadius: borderRadius.full,
+        marginBottom: spacing.lg,
+    },
+    xpText: {
+        ...typography.h3,
+        color: colors.text.inverse,
+    },
+    newWords: {
+        ...typography.bodyBold,
+        color: colors.primary[300],
+        marginBottom: spacing.md,
+    },
+    message: {
+        ...typography.body,
+        color: colors.text.secondary,
+        textAlign: 'center',
+        marginBottom: spacing.xl,
+        lineHeight: 24,
+    },
+    buttons: {
+        width: '100%',
+    }
+});
+
+// ============= ERROR FEEDBACK PLATE =============
+
+export interface ErrorFeedbackPlateProps {
+    original?: string;
+    correction?: string;
+    explanation?: string;
+    grammarPattern?: string;
+    onSave?: () => void;
+    isSaved?: boolean;
+}
+
+export function ErrorFeedbackPlate({
+    original,
+    correction,
+    explanation,
+    grammarPattern,
+    onSave,
+    isSaved
+}: ErrorFeedbackPlateProps) {
+    if (!correction) return null;
+
+    return (
+        <View style={errorPlateStyles.container}>
+            <View style={errorPlateStyles.header}>
+                <Text style={errorPlateStyles.icon}>⚠️</Text>
+                <Text style={errorPlateStyles.title}>Работа над ошибками</Text>
+            </View>
+
+            <View style={errorPlateStyles.content}>
+                {original && (
+                    <View style={errorPlateStyles.row}>
+                        <Text style={errorPlateStyles.label}>Вы написали:</Text>
+                        <Text style={[errorPlateStyles.text, errorPlateStyles.strike]}>{original}</Text>
+                    </View>
+                )}
+
+                <View style={errorPlateStyles.row}>
+                    <Text style={errorPlateStyles.label}>Лучше сказать:</Text>
+                    <Text style={[errorPlateStyles.text, errorPlateStyles.correct]}>{correction}</Text>
+                </View>
+
+                {(explanation || grammarPattern) && (
+                    <View style={errorPlateStyles.infoBox}>
+                        {grammarPattern && (
+                            <Text style={errorPlateStyles.pattern}>{grammarPattern}</Text>
+                        )}
+                        {explanation && (
+                            <Text style={errorPlateStyles.explanation}>{explanation}</Text>
+                        )}
+                    </View>
+                )}
+
+                {onSave && (
+                    <Pressable
+                        style={[errorPlateStyles.saveButton, isSaved && errorPlateStyles.savedButton]}
+                        onPress={onSave}
+                        disabled={isSaved}
+                    >
+                        <Text style={[errorPlateStyles.saveText, isSaved && errorPlateStyles.savedText]}>
+                            {isSaved ? '✓ Сохранено в словарь' : '+ Сохранить правило'}
+                        </Text>
+                    </Pressable>
+                )}
+            </View>
+        </View>
+    );
+}
+
+const errorPlateStyles = StyleSheet.create({
+    container: {
+        borderRadius: borderRadius.lg,
+        overflow: 'hidden',
+        marginTop: spacing.sm,
+        marginBottom: spacing.md,
+        borderWidth: 1,
+        borderColor: colors.accent.amber,
+        backgroundColor: `${colors.accent.amber}10`, // Light yellow background
+    },
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: spacing.md,
+        backgroundColor: `${colors.accent.amber}15`,
+        gap: spacing.sm,
+    },
+    icon: {
+        fontSize: 18,
+    },
+    title: {
+        ...typography.bodyBold,
+        color: colors.accent.amber,
+    },
+    content: {
+        padding: spacing.md,
+        gap: spacing.md,
+    },
+    row: {
+        gap: spacing.xs,
+    },
+    label: {
+        ...typography.caption,
+        color: colors.text.tertiary,
+    },
+    text: {
+        ...typography.body,
+        color: colors.text.primary,
+    },
+    strike: {
+        textDecorationLine: 'line-through',
+        color: colors.accent.red,
+        opacity: 0.8,
+    },
+    correct: {
+        color: colors.accent.green,
+        fontWeight: '500',
+    },
+    infoBox: {
+        backgroundColor: colors.surfaceElevated,
+        padding: spacing.md,
+        borderRadius: borderRadius.md,
+        gap: spacing.xs,
+    },
+    pattern: {
+        ...typography.bodySmall,
+        fontWeight: 'bold',
+        color: colors.primary[300],
+    },
+    explanation: {
+        ...typography.bodySmall,
+        color: colors.text.secondary,
+    },
+    saveButton: {
+        alignSelf: 'flex-start',
+        paddingVertical: spacing.xs,
+        paddingHorizontal: spacing.md,
+        marginTop: spacing.xs,
+        backgroundColor: `${colors.primary[300]}10`,
+        borderRadius: borderRadius.full,
+    },
+    savedButton: {
+        backgroundColor: 'transparent',
+    },
+    saveText: {
+        ...typography.caption,
+        fontWeight: 'bold',
+        color: colors.primary[300],
+    },
+    savedText: {
         color: colors.accent.green,
     },
 });

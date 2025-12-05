@@ -1,315 +1,225 @@
-import { StyleSheet, Text, View, Pressable, Animated, ActivityIndicator } from 'react-native';
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { StyleSheet, Text, View, Pressable, Animated, ActivityIndicator, SafeAreaView } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
-import { getAllWords, getSettings, addXP, DictionaryWord, UserSettings, addWord, XP_REWARDS } from '@/services/storageService';
+import { getAllWords, getSettings, addXP, DictionaryWord, UserSettings, updateWordMetrics, XP_REWARDS } from '@/services/storageService';
 import { unifiedAI } from '@/services/unifiedAIManager';
+import { MatchingGame, CompletionScreen } from '@/components/ui/SharedComponents';
 
-interface MatchCard {
-    id: string;
-    text: string;
-    matchId: string;
-    type: 'word' | 'meaning';
-    isSelected: boolean;
-    isMatched: boolean;
-    translation?: string; // For SRS
-}
-
-// Difficulty settings per round
+// Difficulty settings - progressive matches per round
 const DIFFICULTY_LEVELS = [
-    { pairs: 4, name: 'Легко' },
-    { pairs: 6, name: 'Средне' },
-    { pairs: 8, name: 'Сложно' },
+    { totalMatches: 10, visiblePairs: 5, name: 'Легко' },
+    { totalMatches: 15, visiblePairs: 6, name: 'Средне' },
+    { totalMatches: 20, visiblePairs: 7, name: 'Сложно' },
 ];
 
 export default function MatchingModeScreen() {
     const navigation = useNavigation<any>();
-    const [cards, setCards] = useState<MatchCard[]>([]);
-    const [selectedCard, setSelectedCard] = useState<MatchCard | null>(null);
-    const [matchedPairs, setMatchedPairs] = useState<Set<string>>(new Set());
+    const [wordPool, setWordPool] = useState<DictionaryWord[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [showTranslation, setShowTranslation] = useState(true);
-    const [score, setScore] = useState(0);
-    const [mistakes, setMistakes] = useState(0);
+    const [score, setScore] = useState(0); // Cumulative score across rounds
+    const [mistakes, setMistakes] = useState(0); // Cumulative mistakes
     const [isComplete, setIsComplete] = useState(false);
     const [currentRound, setCurrentRound] = useState(0);
-    const [totalRounds] = useState(DIFFICULTY_LEVELS.length);
-    const shakeAnim = useRef(new Animated.Value(0)).current;
+    const [settings, setSettings] = useState<UserSettings | null>(null);
+    const [completedMatchesInRound, setCompletedMatchesInRound] = useState(0);
 
+    const progressAnim = useRef(new Animated.Value(0)).current;
+
+    // Memoize the words passed to MatchingGame to prevent re-initialization on every render
+    const matchingWords = React.useMemo(() => {
+        return wordPool.map(w => ({
+            id: w.id,
+            text: w.text,
+            translation: w.translation
+        }));
+    }, [wordPool]);
+
+    const totalRounds = DIFFICULTY_LEVELS.length;
+    const currentLevel = DIFFICULTY_LEVELS[currentRound] || DIFFICULTY_LEVELS[0];
+
+    // Load initial game
     useEffect(() => {
         loadGame();
     }, [currentRound]);
 
-    const loadGame = async () => {
-        setIsLoading(true);
-        const [words, settings] = await Promise.all([getAllWords(), getSettings()]);
-        setShowTranslation(settings.showTranslation);
+    // Animate progress bar (using local state to drive it)
+    useEffect(() => {
+        const progress = completedMatchesInRound / currentLevel.totalMatches;
+        Animated.spring(progressAnim, {
+            toValue: progress,
+            tension: 50,
+            friction: 10,
+            useNativeDriver: false,
+        }).start();
+    }, [completedMatchesInRound, currentLevel.totalMatches]);
 
-        // Get pairs based on current difficulty
-        const pairCount = DIFFICULTY_LEVELS[currentRound]?.pairs || 6;
-        const shuffled = words.sort(() => Math.random() - 0.5).slice(0, pairCount);
-
-        if (shuffled.length < pairCount) {
-            // Not enough words - generate with AI
-            const needed = pairCount - shuffled.length;
-            const level = settings.cefrLevel || 'B1';
-
-            try {
-                const prompt = `Generate ${needed} English words appropriate for CEFR level ${level} learner.
+    const generateAIWords = async (count: number, level: string): Promise<DictionaryWord[]> => {
+        try {
+            const prompt = `Generate ${count} random English words appropriate for CEFR level ${level} learner.
 Each word should have its Russian translation.
 Output JSON array only: [{"word": "...", "translation": "..."}]`;
 
-                const response = await unifiedAI.generateText(prompt, { jsonMode: true });
-                if (response.success) {
-                    const cleaned = response.text.replace(/```json/gi, '').replace(/```/g, '').trim();
-                    const aiWords = JSON.parse(cleaned);
-                    for (let i = 0; i < Math.min(aiWords.length, needed); i++) {
-                        const w = aiWords[i];
-                        shuffled.push({
-                            id: `ai_${Date.now()}_${i}`,
-                            text: w.word,
-                            definition: w.word,
-                            translation: w.translation,
-                            cefrLevel: level,
-                            status: 'new',
-                            timesShown: 0,
-                            timesCorrect: 0,
-                            lastReviewedAt: null,
-                            nextReviewAt: Date.now(),
-                            source: 'lesson',
-                            createdAt: Date.now(),
-                        } as DictionaryWord);
-                    }
+            const response = await unifiedAI.generateText(prompt, { jsonMode: true });
+            if (response.success) {
+                const cleaned = response.text.replace(/```json/gi, '').replace(/```/g, '').trim();
+                const aiWords = JSON.parse(cleaned);
+                return aiWords.map((w: any, i: number) => ({
+                    id: `ai_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 9)}`,
+                    text: w.word,
+                    definition: w.word,
+                    translation: w.translation,
+                    cefrLevel: level,
+                    status: 'new',
+                    timesShown: 0,
+                    timesCorrect: 0,
+                    lastReviewedAt: null,
+                    nextReviewAt: Date.now(),
+                    source: 'lesson',
+                    createdAt: Date.now(),
+                } as DictionaryWord));
+            }
+        } catch (e) {
+            console.error('Failed to generate AI words:', e);
+        }
+        return [];
+    };
+
+    const loadGame = async () => {
+        setIsLoading(true);
+        setCompletedMatchesInRound(0); // Reset for new round (but keep global score)
+        progressAnim.setValue(0);
+
+        const [words, userSettings] = await Promise.all([getAllWords(), getSettings()]);
+        setSettings(userSettings);
+        setShowTranslation(userSettings.showTranslation);
+
+        const level = userSettings.cefrLevel || 'B1';
+        const totalNeeded = currentLevel.totalMatches + 5; // Extra buffer
+
+        // Strict Deduplication Map
+        const uniqueWords = new Map<string, DictionaryWord>();
+        words.forEach(w => uniqueWords.set(w.text.toLowerCase().trim(), w));
+
+        // Shuffle dictionary words and take some
+        const shuffledDbWords = [...words].sort(() => Math.random() - 0.5);
+
+        let pool: DictionaryWord[] = [];
+        // Try to fill pool from DB first
+        for (const w of shuffledDbWords) {
+            if (pool.length >= totalNeeded) break;
+            pool.push(w);
+        }
+
+        // Fill remaining with AI words
+        if (pool.length < totalNeeded) {
+            const aiNeeded = totalNeeded - pool.length + 3; // +3 buffer
+            const aiWords = await generateAIWords(aiNeeded, level);
+
+            // Aggressive normalization regex
+            const normalize = (s: string) => s.toLowerCase().replace(/[^a-zа-я0-9]/gi, '').trim();
+
+            for (const w of aiWords) {
+                const txt = normalize(w.text);
+                if (!uniqueWords.has(txt)) {
+                    uniqueWords.set(txt, w);
+                    pool.push(w);
                 }
-            } catch (e) {
-                console.error('Failed to generate AI words:', e);
             }
         }
 
-        // Create card pairs
-        const wordCards: MatchCard[] = shuffled.map(w => ({
-            id: `word-${w.id}`,
-            text: w.text,
-            matchId: w.id,
-            type: 'word' as const,
-            isSelected: false,
-            isMatched: false,
-        }));
-
-        const meaningCards: MatchCard[] = shuffled.map(w => ({
-            id: `meaning-${w.id}`,
-            text: settings.showTranslation ? w.translation : w.definition,
-            matchId: w.id,
-            type: 'meaning' as const,
-            isSelected: false,
-            isMatched: false,
-        }));
-
-        // Shuffle both arrays
-        const allCards = [
-            ...wordCards.sort(() => Math.random() - 0.5),
-            ...meaningCards.sort(() => Math.random() - 0.5),
-        ];
-
-        setCards(allCards);
-        setMatchedPairs(new Set());
-        setSelectedCard(null);
+        // Final shuffle
+        setWordPool(pool.sort(() => Math.random() - 0.5));
         setIsLoading(false);
     };
 
-    const handleCardPress = (card: MatchCard) => {
-        if (card.isMatched) return;
+    const handleMatch = async (wordId: string, isCorrect: boolean) => {
+        if (isCorrect) {
+            setScore(s => s + 1); // Reduced from 10 to 1
+            setCompletedMatchesInRound(p => p + 1);
 
-        if (!selectedCard) {
-            // First selection
-            setSelectedCard(card);
-            setCards(prev => prev.map(c =>
-                c.id === card.id ? { ...c, isSelected: true } : c
-            ));
-        } else if (selectedCard.id === card.id) {
-            // Deselect
-            setSelectedCard(null);
-            setCards(prev => prev.map(c =>
-                c.id === card.id ? { ...c, isSelected: false } : c
-            ));
-        } else {
-            // Second selection - check match
-            if (selectedCard.matchId === card.matchId && selectedCard.type !== card.type) {
-                // Match!
-                setMatchedPairs(prev => new Set([...prev, card.matchId]));
-                setCards(prev => prev.map(c =>
-                    c.matchId === card.matchId
-                        ? { ...c, isMatched: true, isSelected: false }
-                        : c
-                ));
-                setScore(prev => prev + XP_REWARDS.WORD_CORRECT);
-                setSelectedCard(null);
-                // Round completion handled in useEffect
-            } else {
-                // No match - shake and add word to SRS
-                setMistakes(prev => prev + 1);
+            // Only add XP for correct matches
+            await addXP(XP_REWARDS.WORD_CORRECT);
 
-                // Word will be practiced again via normal review flow
-
-                Animated.sequence([
-                    Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
-                    Animated.timing(shakeAnim, { toValue: -10, duration: 50, useNativeDriver: true }),
-                    Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
-                    Animated.timing(shakeAnim, { toValue: 0, duration: 50, useNativeDriver: true }),
-                ]).start();
-
-                setTimeout(() => {
-                    setCards(prev => prev.map(c => ({ ...c, isSelected: false })));
-                    setSelectedCard(null);
-                }, 300);
+            if (!wordId.startsWith('ai_') && !wordId.startsWith('temp_')) {
+                await updateWordMetrics(wordId, 'matching', true);
             }
+        } else {
+            setMistakes(m => m + 1);
+            setScore(s => Math.max(0, s - 1)); // Reduced from 5 to 1
         }
     };
 
-    const restart = () => {
-        setCurrentRound(0);
-        setScore(0);
-        setMistakes(0);
-        setIsComplete(false);
-    };
-
-    const nextRound = () => {
+    const handleRoundComplete = () => {
         if (currentRound < totalRounds - 1) {
+            // Next round
             setCurrentRound(prev => prev + 1);
         } else {
-            // All rounds complete
+            // Game Complete
             setIsComplete(true);
-            addXP(score);
+            addXP(XP_REWARDS.EXERCISE_COMPLETE * 2); // Bonus for finishing all rounds
         }
     };
-
-    // Check for round completion
-    useEffect(() => {
-        const totalPairs = cards.filter(c => c.type === 'word').length;
-        if (totalPairs > 0 && matchedPairs.size >= totalPairs && !isComplete) {
-            setTimeout(() => {
-                if (currentRound < totalRounds - 1) {
-                    nextRound();
-                } else {
-                    setIsComplete(true);
-                    addXP(score);
-                }
-            }, 800);
-        }
-    }, [matchedPairs.size]);
 
     if (isLoading) {
         return (
-            <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={colors.primary[300]} />
-                <Text style={styles.loadingText}>
-                    {currentRound > 0 ? `Раунд ${currentRound + 1}...` : 'Подготовка игры...'}
-                </Text>
-            </View>
+            <SafeAreaView style={styles.container}>
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color={colors.primary[300]} />
+                    <Text style={styles.loadingText}>Подготовка уровня {currentLevel.name}...</Text>
+                </View>
+            </SafeAreaView>
         );
     }
 
     if (isComplete) {
-        const accuracy = Math.round((score / (score + mistakes * 5)) * 100) || 100;
         return (
-            <View style={styles.container}>
-                <View style={styles.resultsContainer}>
-                    <Text style={styles.resultsEmoji}>🎉</Text>
-                    <Text style={styles.resultsTitle}>Все раунды пройдены!</Text>
-                    <Text style={styles.resultsScore}>+{score} XP</Text>
-                    <Text style={styles.resultsStats}>
-                        Раундов: {totalRounds} • Ошибок: {mistakes} • Точность: {accuracy}%
-                    </Text>
-                    <Pressable style={styles.primaryButton} onPress={restart}>
-                        <Text style={styles.primaryButtonText}>Играть снова</Text>
-                    </Pressable>
-                    <Pressable style={styles.secondaryButton} onPress={() => navigation.goBack()}>
-                        <Text style={styles.secondaryButtonText}>Назад</Text>
-                    </Pressable>
-                </View>
-            </View>
+            <CompletionScreen
+                score={score}
+                total={currentLevel.totalMatches * 2} // Approximate total possible score
+                xpEarned={score} // In matching mode score roughly equals XP
+                onRestart={() => {
+                    setCurrentRound(0); // Reset to level 1
+                    setScore(0);
+                    setMistakes(0);
+                    setIsComplete(false);
+                }}
+                onHome={() => navigation.goBack()}
+                title="Игра завершена!"
+                message={`Все уровни пройдены!\nОшибок: ${mistakes}`}
+            />
         );
     }
 
-    const wordCards = cards.filter(c => c.type === 'word');
-    const meaningCards = cards.filter(c => c.type === 'meaning');
-
     return (
-        <View style={styles.container}>
+        <SafeAreaView style={styles.container}>
             {/* Header */}
             <View style={styles.header}>
                 <View>
-                    <Text style={styles.headerTitle}>
-                        Раунд {currentRound + 1} • {DIFFICULTY_LEVELS[currentRound]?.name}
-                    </Text>
-                    <Text style={styles.headerSubtitle}>
-                        {showTranslation ? 'Соедини с переводом' : 'Соедини с определением'}
-                    </Text>
+                    <Text style={styles.headerTitle}>Соединение слов</Text>
+                    <Text style={styles.headerSubtitle}>Уровень: {currentLevel.name}</Text>
                 </View>
                 <View style={styles.scoreContainer}>
-                    <Text style={styles.scoreText}>+{score} XP</Text>
+                    <Text style={styles.scoreText}>{score} XP</Text>
                 </View>
             </View>
 
-            {/* Game Grid */}
-            <View style={styles.gameContainer}>
-                <Animated.View style={[styles.column, { transform: [{ translateX: shakeAnim }] }]}>
-                    <Text style={styles.columnTitle}>English</Text>
-                    {wordCards.map(card => (
-                        <Pressable
-                            key={card.id}
-                            style={[
-                                styles.card,
-                                card.isSelected && styles.cardSelected,
-                                card.isMatched && styles.cardMatched,
-                            ]}
-                            onPress={() => handleCardPress(card)}
-                            disabled={card.isMatched}
-                        >
-                            <Text style={[
-                                styles.cardText,
-                                card.isMatched && styles.cardTextMatched,
-                            ]}>
-                                {card.text}
-                            </Text>
-                        </Pressable>
-                    ))}
-                </Animated.View>
 
-                <Animated.View style={[styles.column, { transform: [{ translateX: shakeAnim }] }]}>
-                    <Text style={styles.columnTitle}>
-                        {showTranslation ? 'Русский' : 'Definition'}
-                    </Text>
-                    {meaningCards.map(card => (
-                        <Pressable
-                            key={card.id}
-                            style={[
-                                styles.card,
-                                card.isSelected && styles.cardSelected,
-                                card.isMatched && styles.cardMatched,
-                            ]}
-                            onPress={() => handleCardPress(card)}
-                            disabled={card.isMatched}
-                        >
-                            <Text style={[
-                                styles.cardText,
-                                styles.meaningText,
-                                card.isMatched && styles.cardTextMatched,
-                            ]} numberOfLines={3}>
-                                {card.text}
-                            </Text>
-                        </Pressable>
-                    ))}
-                </Animated.View>
-            </View>
 
-            {/* Progress */}
-            <View style={styles.progressContainer}>
-                <Text style={styles.progressText}>
-                    {matchedPairs.size} / {wordCards.length} соединено
-                </Text>
+            {/* Shared Game Component */}
+            <View style={{ flex: 1 }}>
+                <MatchingGame
+                    words={matchingWords}
+                    totalMatches={currentLevel.totalMatches}
+                    visiblePairs={currentLevel.visiblePairs}
+                    showTranslation={showTranslation}
+                    showProgressBar={true} // Enable internal bottom progress bar
+                    onMatch={handleMatch}
+                    onComplete={handleRoundComplete}
+                />
             </View>
-        </View>
+        </SafeAreaView>
     );
 }
 
@@ -354,81 +264,34 @@ const styles = StyleSheet.create({
         ...typography.bodyBold,
         color: colors.accent.amber,
     },
-    gameContainer: {
-        flex: 1,
+    progressContainer: {
         flexDirection: 'row',
-        padding: spacing.md,
+        alignItems: 'center',
+        paddingHorizontal: spacing.lg,
+        paddingVertical: spacing.md,
+        backgroundColor: colors.surface,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border.light,
         gap: spacing.md,
     },
-    column: {
+    progressTrack: {
         flex: 1,
-        gap: spacing.sm,
+        height: 8,
+        backgroundColor: colors.surfaceElevated,
+        borderRadius: 4,
+        overflow: 'hidden',
     },
-    columnTitle: {
-        ...typography.bodySmall,
-        color: colors.text.secondary,
-        textAlign: 'center',
-        marginBottom: spacing.xs,
-    },
-    card: {
-        backgroundColor: colors.surface,
-        borderRadius: borderRadius.lg,
-        padding: spacing.md,
-        flex: 1,  // Equal heights in row
-        maxHeight: 70,  // Consistent max height
-        minHeight: 55,  // Consistent min height
-        justifyContent: 'center',
-        alignItems: 'center',
-        // Volumetric 3D effect
-        borderTopWidth: 1,
-        borderLeftWidth: 1,
-        borderTopColor: 'rgba(255,255,255,0.1)',
-        borderLeftColor: 'rgba(255,255,255,0.05)',
-        borderBottomWidth: 4,
-        borderRightWidth: 2,
-        borderBottomColor: 'rgba(0,0,0,0.3)',
-        borderRightColor: 'rgba(0,0,0,0.15)',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.2,
-        shadowRadius: 6,
-        elevation: 6,
-    },
-    cardSelected: {
+    progressBar: {
+        height: '100%',
         backgroundColor: colors.primary[300],
-        borderBottomColor: colors.primary[400],
-        borderRightColor: colors.primary[400],
-        transform: [{ scale: 1.02 }],
-    },
-    cardMatched: {
-        backgroundColor: `${colors.accent.green}30`,
-        borderColor: colors.accent.green,
-        borderWidth: 2,
-        transform: [{ scale: 0.98 }],
-        opacity: 0.8,
-    },
-    cardText: {
-        ...typography.body,
-        color: colors.text.primary,
-        textAlign: 'center',
-        fontWeight: '600',
-    },
-    meaningText: {
-        ...typography.bodySmall,
-    },
-    cardTextMatched: {
-        color: colors.accent.green,
-    },
-    cardTextSelected: {
-        color: colors.text.inverse,
-    },
-    progressContainer: {
-        padding: spacing.lg,
-        alignItems: 'center',
+        borderRadius: 4,
     },
     progressText: {
-        ...typography.body,
+        ...typography.caption,
         color: colors.text.secondary,
+        fontWeight: '700',
+        minWidth: 40,
+        textAlign: 'right',
     },
     resultsContainer: {
         flex: 1,
@@ -462,6 +325,8 @@ const styles = StyleSheet.create({
         paddingVertical: spacing.lg,
         paddingHorizontal: spacing.xxxl,
         marginBottom: spacing.md,
+        width: '100%',
+        alignItems: 'center',
     },
     primaryButtonText: {
         ...typography.bodyBold,
@@ -469,6 +334,8 @@ const styles = StyleSheet.create({
     },
     secondaryButton: {
         paddingVertical: spacing.md,
+        width: '100%',
+        alignItems: 'center',
     },
     secondaryButtonText: {
         ...typography.body,

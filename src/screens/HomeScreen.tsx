@@ -3,7 +3,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useState, useEffect, useCallback } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
-import { getStats, getAllWords, getSettings, UserStats, UserSettings, getLevelTitle } from '@/services/storageService';
+import { getStats, getAllWords, getSettings, UserStats, UserSettings, getLevelTitle, calculateLevel } from '@/services/storageService';
 
 export default function HomeScreen() {
     const navigation = useNavigation<any>();
@@ -44,10 +44,10 @@ export default function HomeScreen() {
         );
     }
 
-    const level = Math.floor(stats.xp / 100) + 1;
-    const levelProgress = (stats.xp % 100) / 100;
-    const xpToNext = 100 - (stats.xp % 100);
-    const levelTitle = getLevelTitle(level);
+    const levelData = calculateLevel(stats.xp);
+    const levelProgress = levelData.progressPercent;
+    const xpToNext = levelData.xpForNext - levelData.currentLevelXP;
+    const levelTitle = getLevelTitle(stats.level);
     const dailyProgress = Math.min((stats.dailyXP / settings.dailyGoal) * 100, 100);
 
     const menuItems = [
@@ -120,11 +120,11 @@ export default function HomeScreen() {
                 <View style={styles.levelCard}>
                     <View style={styles.levelHeader}>
                         <View style={styles.levelBadge}>
-                            <Text style={styles.levelNumber}>{level}</Text>
+                            <Text style={styles.levelNumber}>{stats.level}</Text>
                         </View>
                         <View style={styles.levelInfo}>
                             <Text style={styles.levelTitle}>{levelTitle}</Text>
-                            <Text style={styles.levelSubtitle}>{xpToNext} XP до уровня {level + 1}</Text>
+                            <Text style={styles.levelSubtitle}>{xpToNext} XP до уровня {stats.level + 1}</Text>
                         </View>
                         <View style={styles.xpDisplay}>
                             <Text style={styles.xpText}>{stats.xp}</Text>
@@ -132,7 +132,7 @@ export default function HomeScreen() {
                         </View>
                     </View>
                     <View style={styles.progressBarContainer}>
-                        <View style={[styles.progressBar, { width: `${levelProgress * 100}%` }]} />
+                        <View style={[styles.progressBar, { width: `${levelProgress}%` }]} />
                     </View>
                 </View>
 

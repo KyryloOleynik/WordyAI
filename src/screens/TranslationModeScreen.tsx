@@ -1,8 +1,8 @@
-import { StyleSheet, Text, View, Pressable, TextInput, ScrollView, ActivityIndicator } from 'react-native';
-import { useState, useEffect } from 'react';
+import { StyleSheet, Text, View, Pressable, TextInput, ScrollView, ActivityIndicator, Animated } from 'react-native';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
-import { VolumetricButton } from '@/components/ui/SharedComponents';
+import { VolumetricButton, CompletionScreen } from '@/components/ui/SharedComponents';
 import { addXP, XP_REWARDS } from '@/services/storageService';
 import { unifiedAI } from '@/services/unifiedAIManager';
 import { getWordsForPractice, updateWordMetrics, DictionaryWord } from '@/services/database';
@@ -44,7 +44,7 @@ interface TranslationResult {
 export default function TranslationModeScreen() {
     const navigation = useNavigation();
 
-    const [step, setStep] = useState<'level' | 'exercise' | 'result'>('level');
+    const [step, setStep] = useState<'level' | 'exercise' | 'result' | 'finished'>('level');
     const [selectedLevel, setSelectedLevel] = useState<'A1-A2' | 'B1-B2' | 'C1-C2' | null>(null);
     const [russianSentence, setRussianSentence] = useState('');
     const [expectedTranslation, setExpectedTranslation] = useState('');
@@ -59,6 +59,23 @@ export default function TranslationModeScreen() {
     const [vocabWords, setVocabWords] = useState<DictionaryWord[]>([]);
     const [currentWordId, setCurrentWordId] = useState<string | null>(null);
     const [grammarErrors, setGrammarErrors] = useState<GrammarError[]>([]);
+    const progressAnim = useRef(new Animated.Value(0)).current;
+
+    const progressWidth = progressAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ['0%', '100%'],
+    });
+
+    // Animate progress bar
+    useEffect(() => {
+        const progress = (exerciseCount % 10) / 10;
+        Animated.spring(progressAnim, {
+            toValue: progress,
+            tension: 50,
+            friction: 10,
+            useNativeDriver: false,
+        }).start();
+    }, [exerciseCount]);
 
     // Load vocabulary words on mount
     useEffect(() => {
@@ -81,8 +98,6 @@ export default function TranslationModeScreen() {
             setAiStatus('Google AI');
         } else if (status.activeBackend === 'perplexity') {
             setAiStatus('Perplexity AI');
-        } else if (status.activeBackend === 'local') {
-            setAiStatus('Локальный AI');
         } else {
             setAiStatus('AI недоступен');
         }
@@ -218,6 +233,11 @@ export default function TranslationModeScreen() {
     };
 
     const nextExercise = () => {
+        if (exerciseCount >= 9) { // 0-based index, so 9 is the 10th exercise
+            setStep('finished');
+            return;
+        }
+
         // Rotate vocabulary words
         setVocabWords(prev => [...prev.slice(1), ...prev.slice(0, 1)]);
 
@@ -233,6 +253,7 @@ export default function TranslationModeScreen() {
         setExpectedTranslation('');
         setResult(null);
         setExerciseCount(0);
+        setTotalXP(0);
     };
 
     // Level Selection
@@ -329,6 +350,18 @@ export default function TranslationModeScreen() {
                         </>
                     )}
                 </ScrollView>
+
+                {/* Progress Bar matching MatchingMode */}
+                {!isGenerating && (
+                    <View style={styles.progressContainer}>
+                        <View style={styles.progressTrack}>
+                            <Animated.View style={[styles.progressBar, { width: progressWidth }]} />
+                        </View>
+                        <Text style={styles.progressText}>
+                            {exerciseCount % 10}/10
+                        </Text>
+                    </View>
+                )}
             </View>
         );
     }
@@ -427,6 +460,20 @@ export default function TranslationModeScreen() {
                     </View>
                 </ScrollView>
             </View>
+        );
+    }
+
+    // Finished Phase
+    if (step === 'finished') {
+        return (
+            <CompletionScreen
+                score={Math.round(totalXP / 10)} // Approximation of correct answers based on score
+                total={10}
+                xpEarned={totalXP}
+                onRestart={changeLevel}
+                onHome={() => navigation.goBack()}
+                title="Урок завершен!"
+            />
         );
     }
 
@@ -718,6 +765,35 @@ const styles = StyleSheet.create({
     grammarCorrect: {
         ...typography.bodySmall,
         color: colors.accent.green,
+    },
+    progressContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: spacing.lg,
+        paddingVertical: spacing.md,
+        backgroundColor: colors.surface,
+        borderTopWidth: 1,
+        borderTopColor: colors.border.light,
+        gap: spacing.md,
+    },
+    progressTrack: {
+        flex: 1,
+        height: 8,
+        backgroundColor: colors.surfaceElevated,
+        borderRadius: 4,
+        overflow: 'hidden',
+    },
+    progressBar: {
+        height: '100%',
+        backgroundColor: colors.primary[300],
+        borderRadius: 4,
+    },
+    progressText: {
+        ...typography.caption,
+        color: colors.text.secondary,
+        fontWeight: '700',
+        minWidth: 40,
+        textAlign: 'right',
     },
     grammarNote: {
         ...typography.caption,

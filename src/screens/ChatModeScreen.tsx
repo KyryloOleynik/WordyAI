@@ -4,15 +4,17 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
 import { unifiedAI } from '@/services/unifiedAIManager';
 import TappableText from '@/components/ui/TappableText';
-import { LoadingIndicator } from '@/components/ui/SharedComponents';
+import { LoadingIndicator, ErrorFeedbackPlate } from '@/components/ui/SharedComponents';
 import { saveChatSession, ChatSession, ChatMessage as StoredMessage, getAllWords } from '@/services/storageService';
-import { getGrammarConcepts, GrammarConcept, DictionaryWord } from '@/services/database';
+import { getGrammarConcepts, GrammarConcept, DictionaryWord, updateWordMetrics } from '@/services/database';
+import { analyzeChatGrammar, GrammarError } from '@/services/grammarDetectionService';
 
 interface ChatMessage {
     id: string;
     role: 'user' | 'assistant';
     content: string;
     corrections?: string | null;
+    grammarError?: GrammarError | null; // For detailed feedback plate
     timestamp?: number;
     isStreaming?: boolean;
 }
@@ -42,7 +44,17 @@ export default function ChatModeScreen() {
     const [streamingText, setStreamingText] = useState('');
     const [aiTopicLoading, setAiTopicLoading] = useState(false);
     const [aiSuggestedTopic, setAiSuggestedTopic] = useState<string | null>(null);
+    const [vocabWords, setVocabWords] = useState<DictionaryWord[]>([]);
     const scrollViewRef = useRef<ScrollView>(null);
+
+    // Load vocabulary on mount
+    useEffect(() => {
+        const loadVocab = async () => {
+            const words = await getAllWords();
+            setVocabWords(words);
+        };
+        loadVocab();
+    }, []);
 
     // Save chat session after each assistant message
     const saveSession = async (msgs: ChatMessage[], topic: string, custom?: string) => {
@@ -259,6 +271,39 @@ Then continue the conversation naturally. Keep your response SHORT (2-3 sentence
                 return updated;
             });
 
+            // Track word usage from user message
+            // Check if user correctly used vocabulary words
+            const userText = userMessage.content.toLowerCase();
+            const hasCorrection = fullText.includes('❌') && fullText.includes('✅');
+
+            for (const word of vocabWords) {
+                if (userText.includes(word.text.toLowerCase())) {
+                    // User used this word - check if corrected
+                    const wordWasCorrected = hasCorrection && fullText.toLowerCase().includes(word.text.toLowerCase());
+                    // If no correction mentioning this word -> correct usage
+                    await updateWordMetrics(word.id, 'translation', !wordWasCorrected);
+                    console.log('[Chat] Word tracked:', word.text, 'correct:', !wordWasCorrected);
+                }
+            }
+
+            // BACKGROUND GRAMMAR ANALYSIS (for Dictionary)
+            // We do this after the chat UI update so it doesn't block the user
+            analyzeChatGrammar(userMessage.content, selectedTopic || 'General')
+                .then(errors => {
+                    if (errors && errors.length > 0) {
+                        const topError = errors[0];
+                        // Update the ASSISTANT message to show the specific grammar plate
+                        setMessages(currentMsgs =>
+                            currentMsgs.map(m =>
+                                m.id === assistantId
+                                    ? { ...m, grammarError: topError }
+                                    : m
+                            )
+                        );
+                    }
+                })
+                .catch(err => console.error('Bg grammar analysis error:', err));
+
         } catch (error) {
             console.error('Chat error:', error);
             setMessages(prev => [
@@ -372,7 +417,17 @@ Then continue the conversation naturally. Keep your response SHORT (2-3 sentence
                         ]}
                     >
                         {/* Corrections box for user errors */}
-                        {message.corrections && (
+                        {message.grammarError ? (
+                            <View style={{ marginBottom: 12 }}>
+                                <ErrorFeedbackPlate
+                                    original={message.grammarError.userMistake}
+                                    correction={message.grammarError.example}
+                                    explanation={message.grammarError.description}
+                                    grammarPattern={message.grammarError.patternRu}
+                                    isSaved={true} // Automatically saved by service
+                                />
+                            </View>
+                        ) : message.corrections && (
                             <View style={styles.correctionsBox}>
                                 <Text style={styles.correctionsLabel}>⚠️ Исправления:</Text>
                                 <Text style={styles.correctionsText}>{message.corrections}</Text>

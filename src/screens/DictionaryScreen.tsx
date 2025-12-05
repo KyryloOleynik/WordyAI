@@ -1,10 +1,9 @@
 import { StyleSheet, Text, View, TextInput, Pressable, ScrollView, ActivityIndicator } from 'react-native';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Card from '@/components/ui/Card';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
-import { useLocalLLM } from '@/hooks/useLocalLLM';
+import { unifiedAI } from '@/services/unifiedAIManager';
 import { classifyWordDetailed, WordClassification } from '@/lib/nlp/frequencyAdapter';
-import { ModelDownloadIndicator } from '@/components/ui/ModelDownloadIndicator';
 
 interface DictionaryEntry {
     definition: string;
@@ -12,17 +11,52 @@ interface DictionaryEntry {
     partOfSpeech: string;
     examples: string[];
     synonyms: string[];
+    translation?: string;
 }
 
 export default function DictionaryScreen() {
-    const { isReady, downloadProgress, lookupWord } = useLocalLLM();
-
+    const [isReady, setIsReady] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [entry, setEntry] = useState<DictionaryEntry | null>(null);
     const [classification, setClassification] = useState<WordClassification | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [recentSearches, setRecentSearches] = useState<string[]>([]);
+
+    // Check AI availability on mount
+    useEffect(() => {
+        checkAIStatus();
+    }, []);
+
+    const checkAIStatus = async () => {
+        const status = await unifiedAI.getStatus();
+        setIsReady(status.activeBackend !== 'none');
+    };
+
+    const lookupWord = async (word: string): Promise<DictionaryEntry | null> => {
+        const prompt = `Provide a dictionary entry for the English word "${word}".
+Include a Russian translation.
+
+Output strictly JSON:
+{
+    "phonetic": "/phonetic transcription/",
+    "definition": "clear, concise definition in English",
+    "translation": "перевод на русский язык",
+    "partOfSpeech": "noun/verb/adjective/etc",
+    "examples": ["example sentence 1", "example sentence 2"],
+    "synonyms": ["synonym1", "synonym2"]
+}`;
+
+        const response = await unifiedAI.generateText(prompt, { jsonMode: true });
+        if (!response.success) return null;
+
+        try {
+            const cleaned = response.text.replace(/```json/gi, '').replace(/```/g, '').trim();
+            return JSON.parse(cleaned);
+        } catch {
+            return null;
+        }
+    };
 
     const searchWord = async (word?: string) => {
         const query = (word || searchQuery).trim().toLowerCase();
@@ -37,7 +71,7 @@ export default function DictionaryScreen() {
             const wordClass = classifyWordDetailed(query);
             setClassification(wordClass);
 
-            // Get full definition from LLM
+            // Get full definition from AI
             const result = await lookupWord(query);
             if (result) {
                 setEntry(result);
@@ -48,11 +82,11 @@ export default function DictionaryScreen() {
                     return [query, ...filtered].slice(0, 10);
                 });
             } else {
-                setError('Could not find definition for this word');
+                setError('Не удалось найти определение слова. Проверьте API ключ в настройках.');
             }
         } catch (err) {
             console.error('Dictionary lookup error:', err);
-            setError('Failed to look up word');
+            setError('Ошибка при поиске слова');
         } finally {
             setIsLoading(false);
         }
@@ -70,17 +104,11 @@ export default function DictionaryScreen() {
     if (!isReady) {
         return (
             <View style={styles.loadingContainer}>
-                <ModelDownloadIndicator
-                    visible={!!downloadProgress}
-                    progress={downloadProgress?.progress || 0}
-                    text={downloadProgress?.text || 'Initializing...'}
-                />
-                {!downloadProgress && (
-                    <>
-                        <ActivityIndicator size="large" color={colors.primary[500]} />
-                        <Text style={styles.loadingText}>Loading AI Model...</Text>
-                    </>
-                )}
+                <Text style={styles.noAIEmoji}>🔑</Text>
+                <Text style={styles.noAITitle}>Требуется API ключ</Text>
+                <Text style={styles.noAIText}>
+                    Добавьте Google или Perplexity API ключ в настройках для использования словаря.
+                </Text>
             </View>
         );
     }
@@ -94,7 +122,7 @@ export default function DictionaryScreen() {
                         style={styles.searchInput}
                         value={searchQuery}
                         onChangeText={setSearchQuery}
-                        placeholder="Search for a word..."
+                        placeholder="Введите слово..."
                         placeholderTextColor={colors.text.tertiary}
                         onSubmitEditing={() => searchWord()}
                         autoCapitalize="none"
@@ -135,6 +163,14 @@ export default function DictionaryScreen() {
 
                         {/* Part of Speech */}
                         <Text style={styles.partOfSpeech}>{entry.partOfSpeech}</Text>
+
+                        {/* Translation */}
+                        {entry.translation && (
+                            <View style={styles.translationSection}>
+                                <Text style={styles.sectionLabel}>Перевод</Text>
+                                <Text style={styles.translation}>{entry.translation}</Text>
+                            </View>
+                        )}
 
                         {/* Definition */}
                         <View style={styles.section}>
@@ -194,7 +230,7 @@ export default function DictionaryScreen() {
                 {/* Recent Searches */}
                 {!entry && !isLoading && recentSearches.length > 0 && (
                     <View style={styles.recentSection}>
-                        <Text style={styles.recentLabel}>Recent Searches</Text>
+                        <Text style={styles.recentLabel}>Недавние запросы</Text>
                         <View style={styles.recentContainer}>
                             {recentSearches.map((word, index) => (
                                 <Pressable
@@ -216,9 +252,9 @@ export default function DictionaryScreen() {
                 {!entry && !isLoading && !error && recentSearches.length === 0 && (
                     <View style={styles.emptyState}>
                         <Text style={styles.emptyEmoji}>📖</Text>
-                        <Text style={styles.emptyTitle}>Dictionary</Text>
+                        <Text style={styles.emptyTitle}>Словарь</Text>
                         <Text style={styles.emptyText}>
-                            Search for any English word to get its definition, examples, and CEFR level.
+                            Введите любое английское слово, чтобы получить определение, перевод и уровень CEFR.
                         </Text>
                     </View>
                 )}
@@ -239,10 +275,19 @@ const styles = StyleSheet.create({
         backgroundColor: colors.background,
         padding: spacing.xl,
     },
-    loadingText: {
-        marginTop: spacing.md,
-        color: colors.text.secondary,
+    noAIEmoji: {
+        fontSize: 60,
+        marginBottom: spacing.lg,
+    },
+    noAITitle: {
+        ...typography.h2,
+        color: colors.text.primary,
+        marginBottom: spacing.sm,
+    },
+    noAIText: {
         ...typography.body,
+        color: colors.text.secondary,
+        textAlign: 'center',
     },
     searchHeader: {
         padding: spacing.lg,
@@ -311,6 +356,18 @@ const styles = StyleSheet.create({
         color: colors.primary[600],
         fontStyle: 'italic',
         marginBottom: spacing.lg,
+    },
+    translationSection: {
+        marginBottom: spacing.lg,
+        backgroundColor: `${colors.primary[300]}15`,
+        padding: spacing.md,
+        borderRadius: borderRadius.md,
+        borderLeftWidth: 3,
+        borderLeftColor: colors.primary[300],
+    },
+    translation: {
+        ...typography.h3,
+        color: colors.primary[300],
     },
     section: {
         marginBottom: spacing.lg,

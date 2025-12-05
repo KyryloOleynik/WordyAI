@@ -7,17 +7,15 @@ import { useNavigation } from '@react-navigation/native';
 import * as Speech from 'expo-speech';
 import { colors, spacing, borderRadius, typography } from '@/lib/design/theme';
 import { VButton, VCard, VProgress, playSound, useShake, usePulse } from '@/components/ui/DesignSystem';
-import { ExerciseHeader, WrongAnswerFlash } from '@/components/ui/SharedComponents';
-import { addXP, XP_REWARDS, getSettings } from '@/services/storageService';
+import { ExerciseHeader, WrongAnswerFlash, MatchingGame, MatchingWord, CompletionScreen } from '@/components/ui/SharedComponents';
+import { addXP, XP_REWARDS, getSettings, updateWordMetrics, addWord } from '@/services/storageService';
 import { unifiedAI } from '@/services/unifiedAIManager';
 import {
     getWordsForPractice,
-    updateWordMetrics,
     DictionaryWord,
     getGrammarForPractice,
     GrammarConcept,
     updateGrammarMetrics,
-    addWord
 } from '@/services/database';
 import TappableText from '@/components/ui/TappableText';
 
@@ -52,6 +50,7 @@ export default function LessonsScreen() {
     const [currentIndex, setCurrentIndex] = useState(0);
     const [progress, setProgress] = useState<LessonProgress>({ current: 0, total: 0, correct: 0, xpEarned: 0 });
     const [userAnswer, setUserAnswer] = useState('');
+    const [selectedOptionIndices, setSelectedOptionIndices] = useState<number[]>([]); // Track indices of selected options for sentence-build
     const [selectedPairs, setSelectedPairs] = useState<Map<string, string>>(new Map());
     const [showResult, setShowResult] = useState(false);
     const [isCorrect, setIsCorrect] = useState(false);
@@ -77,66 +76,69 @@ export default function LessonsScreen() {
             const level = settings.cefrLevel || 'B1';
             setUserLevel(level);
 
-            // Get words from dictionary
-            let words = await getWordsForPractice(5, false);
-            const grammar = await getGrammarForPractice(2);
+            // Get words from dictionary (increased to 10)
+            let words = await getWordsForPractice(10, false);
+            const grammar = await getGrammarForPractice(3);
 
             const newExercises: Exercise[] = [];
             let exerciseId = 0;
 
-            // If dictionary is empty, generate words using AI
-            if (words.length === 0) {
-                // Try AI generation first
-                const aiWordPrompt = `Generate 5 English words appropriate for CEFR level ${level} learner.
+            // Always generate at least 3 random AI words to expand vocabulary
+            const aiWordsNeeded = Math.max(3, 10 - words.length);
+            const aiWordPrompt = `Generate ${aiWordsNeeded} random English words appropriate for CEFR level ${level} learner.
 Each word should have its Russian translation.
 Output JSON array only: [{"word": "...", "translation": "..."}]`;
 
-                try {
-                    const response = await unifiedAI.generateText(aiWordPrompt, { jsonMode: true });
-                    if (response.success) {
-                        const cleaned = response.text.replace(/```json/gi, '').replace(/```/g, '').trim();
-                        const aiWords = JSON.parse(cleaned);
-                        for (const w of aiWords.slice(0, 5)) {
-                            const fakeWord: DictionaryWord = {
-                                id: `temp_${exerciseId++}`,
-                                text: w.word,
-                                translation: w.translation,
-                                definition: w.word,
-                                cefrLevel: level,
-                                status: 'new',
-                                timesShown: 0,
-                                timesCorrect: 0,
-                                lastReviewedAt: null,
-                                nextReviewAt: Date.now(),
-                                createdAt: Date.now(),
-                                source: 'lesson',
-                                translationCorrect: 0,
-                                translationWrong: 0,
-                                matchingCorrect: 0,
-                                matchingWrong: 0,
-                                lessonCorrect: 0,
-                                lessonWrong: 0,
-                                reviewCount: 0,
-                                masteryScore: 0,
-                            };
-                            words.push(fakeWord);
-                        }
-                    }
-                } catch (e) {
-                    setError('Не удалось сгенерировать слова. Проверьте подключение к AI или добавьте слова в словарь.');
-                    setIsLoading(false);
-                    return;
-                }
+            try {
+                const response = await unifiedAI.generateText(aiWordPrompt, { jsonMode: true });
+                if (response.success) {
+                    const cleaned = response.text.replace(/```json/gi, '').replace(/```/g, '').trim();
+                    const aiWords = JSON.parse(cleaned);
 
-                if (words.length === 0) {
-                    setError('AI не вернул слова. Попробуйте ещё раз или добавьте слова в словарь.');
-                    setIsLoading(false);
-                    return;
+                    // Create map for strict deduplication (text -> word)
+                    const uniqueMap = new Map<string, DictionaryWord>();
+                    words.forEach(w => uniqueMap.set(w.text.toLowerCase().trim(), w));
+
+                    for (const w of aiWords.slice(0, aiWordsNeeded)) {
+                        const normalizedText = w.word.toLowerCase().trim();
+
+                        // Skip if we already have this word (from DB or previously added AI word)
+                        if (uniqueMap.has(normalizedText)) continue;
+
+                        const fakeWord: DictionaryWord = {
+                            id: `temp_${exerciseId++}`,
+                            text: w.word,
+                            translation: w.translation,
+                            definition: w.word,
+                            cefrLevel: level,
+                            status: 'new',
+                            timesShown: 0,
+                            timesCorrect: 0,
+                            timesWrong: 0,
+                            lastReviewedAt: null,
+                            nextReviewAt: Date.now(),
+                            createdAt: Date.now(),
+                            source: 'lesson',
+                            reviewCount: 0,
+                            masteryScore: 0,
+                        };
+
+                        words.push(fakeWord);
+                        uniqueMap.set(normalizedText, fakeWord);
+                    }
                 }
+            } catch (e) {
+                console.log('AI word generation failed:', e);
             }
 
-            // Generate exercises from words
-            for (let i = 0; i < Math.min(words.length, 5); i++) {
+            if (words.length === 0) {
+                setError('Не удалось загрузить слова. Добавьте слова в словарь или проверьте AI.');
+                setIsLoading(false);
+                return;
+            }
+
+            // Generate exercises from words (up to 10 exercises)
+            for (let i = 0; i < Math.min(words.length, 10); i++) {
                 const word = words[i];
                 const isNewWord = word.id.startsWith('temp_');
                 const exerciseTypes: ExerciseType[] = ['fill-blank', 'translation', 'multiple-choice', 'listening'];
@@ -145,26 +147,45 @@ Output JSON array only: [{"word": "...", "translation": "..."}]`;
                 switch (type) {
                     case 'fill-blank':
                         try {
-                            const result = await unifiedAI.generateSentenceForWord(word.text, word.translation, word.cefrLevel || level);
-                            newExercises.push({
-                                id: `ex_${exerciseId++}`,
-                                type: 'fill-blank',
-                                question: result?.sentence || `The _____ is very important.`,
-                                correctAnswer: result?.missingWord || word.text,
-                                hint: word.translation,
-                                word,
-                                isNewWord,
-                            });
+                            // Better prompt to ensure proper blank generation
+                            const fillPrompt = `Create a simple English sentence for level ${word.cefrLevel || level} using the word "${word.text}".
+The sentence must contain the word "${word.text}" replaced with _____.
+
+Output JSON only:
+{
+  "sentence": "The _____ was very interesting.",
+  "missingWord": "${word.text}",
+  "russianTranslation": "Русский перевод предложения"
+}
+
+IMPORTANT: The sentence MUST contain _____ as a placeholder for the missing word.`;
+
+                            const result = await unifiedAI.generateText(fillPrompt, { jsonMode: true });
+                            if (result.success) {
+                                const cleaned = result.text.replace(/```json/gi, '').replace(/```/g, '').trim();
+                                const data = JSON.parse(cleaned);
+
+                                // Ensure the sentence has a blank
+                                let sentence = data.sentence || '';
+                                if (!sentence.includes('_____') && !sentence.includes('___')) {
+                                    // Force add blank if AI didn't include it
+                                    sentence = sentence.replace(new RegExp(word.text, 'gi'), '_____');
+                                }
+
+                                if (sentence.includes('_____') || sentence.includes('___')) {
+                                    newExercises.push({
+                                        id: `ex_${exerciseId++}`,
+                                        type: 'fill-blank',
+                                        question: sentence,
+                                        correctAnswer: data.missingWord || word.text,
+                                        hint: data.russianTranslation || word.translation,
+                                        word,
+                                        isNewWord,
+                                    });
+                                }
+                            }
                         } catch {
-                            newExercises.push({
-                                id: `ex_${exerciseId++}`,
-                                type: 'fill-blank',
-                                question: `I need to _____ this task.`,
-                                correctAnswer: word.text,
-                                hint: word.translation,
-                                word,
-                                isNewWord,
-                            });
+                            console.log('AI failed to generate fill-blank for:', word.text);
                         }
                         break;
 
@@ -217,23 +238,43 @@ Output JSON array only: [{"word": "...", "translation": "..."}]`;
                     type: 'matching',
                     question: 'Соедините слова с переводами:',
                     correctAnswer: '',
-                    pairs: words.slice(0, 4).map(w => ({ word: w.text, translation: w.translation })),
+                    pairs: words.slice(0, 10).map(w => ({ word: w.text, translation: w.translation })),
                 });
             }
 
-            // Add sentence-build
+            // Add sentence-build - AI generated with Russian translation
             if (words.length > 0) {
                 const word = words[0];
-                const sentence = `I want to ${word.text} today`;
-                newExercises.push({
-                    id: `ex_${exerciseId++}`,
-                    type: 'sentence-build',
-                    question: 'Составьте предложение:',
-                    correctAnswer: sentence,
-                    options: sentence.split(' ').sort(() => Math.random() - 0.5),
-                    hint: word.translation,
-                    word,
-                });
+                try {
+                    const sentencePrompt = `Create a simple English sentence using the word "${word.text}" for a ${level} level learner.
+Also provide the Russian translation of the sentence.
+
+Output JSON only:
+{
+  "englishSentence": "The book was very interesting.",
+  "russianSentence": "Книга была очень интересной."
+}`;
+                    const response = await unifiedAI.generateText(sentencePrompt, { jsonMode: true });
+                    if (response.success) {
+                        const cleaned = response.text.replace(/```json/gi, '').replace(/```/g, '').trim();
+                        const data = JSON.parse(cleaned);
+                        if (data.englishSentence && data.russianSentence) {
+                            // Scramble words for the exercise
+                            const wordsArray = data.englishSentence.split(' ');
+                            newExercises.push({
+                                id: `ex_${exerciseId++}`,
+                                type: 'sentence-build',
+                                question: data.russianSentence, // Russian translation as the question
+                                correctAnswer: data.englishSentence,
+                                options: wordsArray.sort(() => Math.random() - 0.5),
+                                hint: word.translation,
+                                word,
+                            });
+                        }
+                    }
+                } catch {
+                    console.log('AI failed to generate sentence-build');
+                }
             }
 
             // Add grammar exercises from grammar concepts needing practice
@@ -277,6 +318,17 @@ Output JSON array only: [{"word": "...", "translation": "..."}]`;
     };
 
     const currentExercise = exercises[currentIndex];
+
+    const matchingWords = React.useMemo(() => {
+        if (currentExercise?.type === 'matching' && currentExercise.pairs) {
+            return currentExercise.pairs.map((p, i) => ({
+                id: `match_${i}`,
+                text: p.word,
+                translation: p.translation
+            }));
+        }
+        return [];
+    }, [currentExercise?.id]);
 
     const speakWord = async (text: string) => {
         if (isSpeaking) {
@@ -322,9 +374,36 @@ Output JSON array only: [{"word": "...", "translation": "..."}]`;
         setIsCorrect(correct);
         setShowResult(true);
 
-        // Update word metrics (only for real dictionary words)
-        if (currentExercise.word && !currentExercise.isNewWord) {
-            await updateWordMetrics(currentExercise.word.id, 'lesson', correct);
+        // Update word metrics - always update for existing dictionary words
+        if (currentExercise.word) {
+            const wordId = currentExercise.word.id;
+
+            // For new words (AI-generated temp words), add to dictionary first if answer is wrong
+            if (currentExercise.isNewWord && !correct) {
+                try {
+                    const addedWord = await addWord({
+                        text: currentExercise.word.text,
+                        translation: currentExercise.word.translation,
+                        definition: currentExercise.word.text,
+                        cefrLevel: userLevel,
+                        status: 'learning',
+                        timesShown: 1,
+                        timesCorrect: 0,
+                        timesWrong: 1,
+                        lastReviewedAt: Date.now(),
+                        nextReviewAt: Date.now(),
+                        source: 'lesson',
+                        reviewCount: 1,
+                        masteryScore: 0,
+                    });
+                    console.log('[LessonsScreen] Added wrong word to dictionary:', currentExercise.word.text);
+                } catch { /* Word may already exist */ }
+            } else if (!currentExercise.isNewWord && !wordId.startsWith('temp_')) {
+                // Update metrics for existing dictionary words
+                console.log('[LessonsScreen] Updating metrics for:', currentExercise.word.text, 'correct:', correct);
+                await updateWordMetrics(wordId, 'lesson', correct);
+                console.log('[LessonsScreen] Metrics updated successfully');
+            }
         }
 
         // Update grammar concept metrics
@@ -343,15 +422,10 @@ Output JSON array only: [{"word": "...", "translation": "..."}]`;
                     status: 'learning',
                     timesShown: 1,
                     timesCorrect: 1,
+                    timesWrong: 0,
                     lastReviewedAt: Date.now(),
                     nextReviewAt: Date.now() + 24 * 60 * 60 * 1000,
                     source: 'lesson',
-                    translationCorrect: 0,
-                    translationWrong: 0,
-                    matchingCorrect: 0,
-                    matchingWrong: 0,
-                    lessonCorrect: 1,
-                    lessonWrong: 0,
                     reviewCount: 1,
                     masteryScore: 0.1,
                 });
@@ -378,6 +452,7 @@ Output JSON array only: [{"word": "...", "translation": "..."}]`;
             setCurrentIndex(prev => prev + 1);
             setProgress(p => ({ ...p, current: p.current + 1 }));
             setUserAnswer('');
+            setSelectedOptionIndices([]);
             setSelectedPairs(new Map());
             setShowResult(false);
             setIsCorrect(false);
@@ -438,35 +513,20 @@ Output JSON array only: [{"word": "...", "translation": "..."}]`;
 
     // ============ LESSON COMPLETE ============
     if (lessonComplete) {
-        const percentage = Math.round((progress.correct / progress.total) * 100);
         return (
-            <SafeAreaView style={styles.container}>
-                <View style={styles.completeContainer}>
-                    <VCard style={styles.completeCard}>
-                        <Text style={styles.completeEmoji}>
-                            {percentage >= 80 ? '🎉' : percentage >= 50 ? '👍' : '📝'}
-                        </Text>
-                        <Text style={styles.completeTitle}>Урок завершён!</Text>
-                        <Text style={styles.completeScore}>
-                            {progress.correct}/{progress.total} правильно ({percentage}%)
-                        </Text>
-
-                        <View style={styles.xpBadge}>
-                            <Text style={styles.xpBadgeText}>+{progress.xpEarned} XP</Text>
-                        </View>
-
-                        <View style={styles.completeButtons}>
-                            <VButton title="Ещё урок" variant="success" onPress={() => {
-                                setLessonComplete(false);
-                                setCurrentIndex(0);
-                                setProgress({ current: 0, total: 0, correct: 0, xpEarned: 0 });
-                                generateLesson();
-                            }} fullWidth />
-                            <VButton title="Главная" variant="ghost" onPress={() => navigation.goBack()} fullWidth />
-                        </View>
-                    </VCard>
-                </View>
-            </SafeAreaView>
+            <CompletionScreen
+                score={progress.correct}
+                total={progress.total}
+                xpEarned={progress.xpEarned}
+                onRestart={() => {
+                    setLessonComplete(false);
+                    setCurrentIndex(0);
+                    setProgress({ current: 0, total: 0, correct: 0, xpEarned: 0 });
+                    generateLesson();
+                }}
+                onHome={() => navigation.goBack()}
+                title="Урок завершён!"
+            />
         );
     }
 
@@ -506,14 +566,22 @@ Output JSON array only: [{"word": "...", "translation": "..."}]`;
                             </Pressable>
                         )}
 
-                        {/* Use TappableText for sentence exercises */}
-                        {['fill-blank', 'sentence-build'].includes(currentExercise.type) ? (
-                            <TappableText text={currentExercise.question} style={styles.questionText} />
+                        {/* Sentence-build: Show Russian sentence as translation task */}
+                        {currentExercise.type === 'sentence-build' ? (
+                            <View>
+                                <Text style={styles.translateLabel}>Переведите на английский:</Text>
+                                <Text style={styles.russianSentence}>{currentExercise.question}</Text>
+                            </View>
                         ) : (
-                            <Text style={styles.questionText}>{currentExercise.question}</Text>
+                            /* Use TappableText for fill-blank (English sentences with blanks) */
+                            currentExercise.type === 'fill-blank' ? (
+                                <TappableText text={currentExercise.question} style={styles.questionText} />
+                            ) : (
+                                <Text style={styles.questionText}>{currentExercise.question}</Text>
+                            )
                         )}
 
-                        {currentExercise.hint && currentExercise.type !== 'matching' && (
+                        {currentExercise.hint && currentExercise.type !== 'matching' && currentExercise.type !== 'sentence-build' && (
                             <View style={styles.hint}>
                                 <Text style={styles.hintLabel}>Подсказка:</Text>
                                 <Text style={styles.hintText}>{currentExercise.hint}</Text>
@@ -539,23 +607,40 @@ Output JSON array only: [{"word": "...", "translation": "..."}]`;
                     {/* Sentence Build */}
                     {currentExercise.type === 'sentence-build' && currentExercise.options && (
                         <View style={styles.sentenceBuildContainer}>
+                            {/* Instruction label */}
+                            <Text style={styles.sentenceBuildInstruction}>Составьте предложение по-английски:</Text>
+
+                            {/* Constructed sentence result */}
                             <View style={styles.sentenceResult}>
-                                <Text style={styles.sentenceResultText}>{userAnswer || '...'}</Text>
+                                <Text style={styles.sentenceResultText}>{userAnswer || 'Нажимайте на слова ниже...'}</Text>
                             </View>
                             <View style={styles.wordChips}>
                                 {currentExercise.options.map((word, i) => (
                                     <Pressable
                                         key={i}
-                                        style={[styles.wordChip, userAnswer.includes(word) && styles.wordChipUsed]}
-                                        onPress={() => !showResult && setUserAnswer(prev => prev ? `${prev} ${word}` : word)}
-                                        disabled={showResult || userAnswer.includes(word)}
+                                        style={[styles.wordChip, selectedOptionIndices.includes(i) && styles.wordChipUsed]}
+                                        onPress={() => {
+                                            if (!showResult && !selectedOptionIndices.includes(i)) {
+                                                const newIndices = [...selectedOptionIndices, i];
+                                                setSelectedOptionIndices(newIndices);
+                                                const newSentence = newIndices.map(idx => currentExercise.options![idx]).join(' ');
+                                                setUserAnswer(newSentence);
+                                            }
+                                        }}
+                                        disabled={showResult || selectedOptionIndices.includes(i)}
                                     >
                                         <Text style={styles.wordChipText}>{word}</Text>
                                     </Pressable>
                                 ))}
                             </View>
                             {userAnswer && !showResult && (
-                                <Pressable onPress={() => setUserAnswer('')} style={styles.clearButton}>
+                                <Pressable
+                                    onPress={() => {
+                                        setUserAnswer('');
+                                        setSelectedOptionIndices([]);
+                                    }}
+                                    style={styles.clearButton}
+                                >
                                     <Text style={styles.clearButtonText}>Очистить</Text>
                                 </Pressable>
                             )}
@@ -583,66 +668,44 @@ Output JSON array only: [{"word": "...", "translation": "..."}]`;
                         </View>
                     )}
 
-                    {/* Matching - word pair connection */}
+                    {/* Matching - using Shared MatchingGame */}
                     {currentExercise.type === 'matching' && currentExercise.pairs && (
-                        <View style={styles.matchingContainer}>
-                            <View style={styles.matchingColumn}>
-                                <Text style={styles.matchingLabel}>English</Text>
-                                {currentExercise.pairs.map((pair, i) => {
-                                    const isWordSelected = selectedWord === pair.word;
-                                    const isWordMatched = selectedPairs.has(pair.word);
-                                    return (
-                                        <Pressable
-                                            key={`w_${i}`}
-                                            style={[
-                                                styles.matchingItem,
-                                                isWordSelected && styles.matchingItemActive,
-                                                isWordMatched && styles.matchingItemMatched,
-                                            ]}
-                                            onPress={() => {
-                                                if (!showResult && !isWordMatched) {
-                                                    speakWord(pair.word);
-                                                    setSelectedWord(pair.word);
-                                                }
-                                            }}
-                                            disabled={showResult || isWordMatched}
-                                        >
-                                            <Text style={[
-                                                styles.matchingItemText,
-                                                isWordMatched && styles.matchingItemTextMatched
-                                            ]}>{pair.word}</Text>
-                                        </Pressable>
-                                    );
-                                })}
-                            </View>
-                            <View style={styles.matchingColumn}>
-                                <Text style={styles.matchingLabel}>Русский</Text>
-                                {(shuffledTranslations.length > 0 ? shuffledTranslations : currentExercise.pairs.map(p => p.translation)).map((translation, i) => {
-                                    const isTranslationMatched = [...selectedPairs.values()].includes(translation);
-                                    return (
-                                        <Pressable
-                                            key={`t_${i}`}
-                                            style={[
-                                                styles.matchingItem,
-                                                selectedWord && !isTranslationMatched && styles.matchingItemHighlight,
-                                                isTranslationMatched && styles.matchingItemMatched,
-                                            ]}
-                                            onPress={() => {
-                                                if (selectedWord && !showResult && !isTranslationMatched) {
-                                                    handleMatchSelect(selectedWord, translation);
-                                                    setSelectedWord(null);
-                                                }
-                                            }}
-                                            disabled={showResult || isTranslationMatched}
-                                        >
-                                            <Text style={[
-                                                styles.matchingItemText,
-                                                isTranslationMatched && styles.matchingItemTextMatched
-                                            ]}>{translation}</Text>
-                                        </Pressable>
-                                    );
-                                })}
-                            </View>
+                        <View style={{ flex: 1, minHeight: 400 }}>
+                            <MatchingGame
+                                showProgressBar={false}
+                                words={matchingWords}
+                                totalMatches={currentExercise.pairs.length} // For single exercise, match all pairs
+                                visiblePairs={Math.min(4, currentExercise.pairs.length)}
+                                onMatch={async (matchId, isCorrect) => {
+                                    if (isCorrect) {
+                                        playSound('correct');
+                                        // Find matched word to update metrics
+                                        // Implementation note: we map ID to index above
+                                        const index = parseInt(matchId.split('_')[1]);
+                                        const pair = currentExercise.pairs![index];
+                                        if (pair) {
+                                            // Find full dictionary word object if possible, or create stub
+                                            // This assumes word text is unique in dictionary
+                                            // Ideally we should pass IDs but pair structure is simple here
+                                        }
+                                    } else {
+                                        playSound('wrong');
+                                        shake();
+                                    }
+                                }}
+                                onComplete={() => {
+                                    // Auto-advance after small delay when all matched
+                                    setTimeout(async () => {
+                                        pulse();
+                                        playSound('levelup');
+                                        const xp = XP_REWARDS.EXERCISE_COMPLETE;
+                                        await addXP(xp);
+                                        setProgress(p => ({ ...p, correct: p.correct + 1, xpEarned: p.xpEarned + xp }));
+                                        nextExercise();
+                                    }, 1000);
+                                }}
+                                showTranslation={true}
+                            />
                         </View>
                     )}
 
@@ -679,7 +742,7 @@ const styles = StyleSheet.create({
     backText: { fontSize: 24, color: colors.text.primary },
     headerTitle: { ...typography.h3, color: colors.text.primary },
     loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-    loadingText: { marginTop: spacing.md, color: colors.text.primary, ...typography.h3 },
+    loadingText: { marginTop: spacing.md, color: colors.text.primary, ...typography.h3, textAlign: 'center' },
     loadingSubtext: { color: colors.text.secondary, ...typography.body },
     xpMini: { backgroundColor: `${colors.accent.amber}20`, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderRadius: borderRadius.sm },
     xpMiniText: { ...typography.caption, color: colors.accent.amber, fontWeight: '700' },
@@ -690,6 +753,8 @@ const styles = StyleSheet.create({
 
     questionCard: { padding: spacing.lg, marginHorizontal: 0 },
     questionText: { ...typography.h3, color: colors.text.primary, lineHeight: 30 },
+    translateLabel: { ...typography.caption, color: colors.text.tertiary, marginBottom: spacing.sm, textTransform: 'uppercase' },
+    russianSentence: { ...typography.h2, color: colors.primary[300], lineHeight: 34, fontWeight: '600' },
 
     playButton: { alignItems: 'center', padding: spacing.xl, backgroundColor: `${colors.accent.blue}10`, borderRadius: borderRadius.lg, marginBottom: spacing.lg },
     playIcon: { fontSize: 48 },
@@ -704,6 +769,7 @@ const styles = StyleSheet.create({
     inputWrong: { borderColor: colors.accent.red, backgroundColor: `${colors.accent.red}10` },
 
     sentenceBuildContainer: { gap: spacing.lg },
+    sentenceBuildInstruction: { ...typography.bodySmall, color: colors.text.secondary, textAlign: 'center', marginBottom: spacing.xs },
     sentenceResult: { backgroundColor: colors.surfaceElevated, padding: spacing.lg, borderRadius: borderRadius.lg, minHeight: 60 },
     sentenceResultText: { ...typography.body, color: colors.text.primary, textAlign: 'center' },
     wordChips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, justifyContent: 'center' },

@@ -2,7 +2,7 @@
 // AI-powered grammar error detection from user translations
 
 import { unifiedAI } from './unifiedAIManager';
-import { addOrUpdateGrammarConcept, GrammarConcept } from './database';
+import { addOrUpdateGrammarConcept, GrammarConcept, initDatabase } from './database';
 
 // Common grammar patterns for English learners
 export interface GrammarError {
@@ -86,6 +86,7 @@ export async function analyzeGrammarErrors(
     correctTranslation?: string
 ): Promise<GrammarError[]> {
     try {
+        await initDatabase();
         // Use AI to detect grammar patterns in errors
         const prompt = `Analyze this English translation for grammar errors.
 
@@ -93,7 +94,11 @@ Original (Russian): ${originalSentence}
 User wrote: ${userTranslation}
 ${correctTranslation ? `Correct: ${correctTranslation}` : ''}
 
-Identify up to 2 SPECIFIC grammar errors. For each error, respond in this EXACT JSON format:
+Identify up to 2 SPECIFIC grammar errors.
+IMPORTANT: Note these errors for the user's personal dictionary.
+Be precise.
+
+For each error, respond in this EXACT JSON format:
 [
   {
     "pattern": "Grammar Pattern Name (e.g., Present Perfect, Articles, Word Order)",
@@ -170,10 +175,76 @@ export function getGrammarTip(pattern: string): string {
 /**
  * Get all available grammar patterns for reference
  */
-export function getAllGrammarPatterns(): Array<{ name: string; nameRu: string; description: string }> {
+export function getAllGrammarPatterns() {
     return Object.entries(GRAMMAR_PATTERNS).map(([name, info]) => ({
         name,
         nameRu: info.nameRu,
         description: info.description,
     }));
+}
+
+/**
+ * Analyze chat message for grammar errors (specifically for Dictionary saving)
+ */
+export async function analyzeChatGrammar(
+    userMessage: string,
+    context?: string
+): Promise<GrammarError[]> {
+    try {
+        await initDatabase();
+        const prompt = `Analyze this student's English message for grammar mistakes.
+Context: ${context || 'General conversation'}
+Student wrote: "${userMessage}"
+
+If there are grammar mistakes, identify the most important one.
+Respond in JSON:
+[
+  {
+    "pattern": "Grammar Pattern Name",
+    "mistake": "exact user mistake substring",
+    "correction": "corrected version",
+    "explanation": "short explanation in Russian"
+  }
+]
+
+If no mistakes, return []. JSON only.`;
+
+        const response = await unifiedAI.generateText(prompt);
+        const responseText = typeof response === 'string' ? response : response?.text || '';
+
+        const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+        if (!jsonMatch) return [];
+
+        const errors = JSON.parse(jsonMatch[0]);
+        const grammarErrors: GrammarError[] = [];
+
+        for (const error of errors) {
+            const patternInfo = GRAMMAR_PATTERNS[error.pattern] || {
+                nameRu: error.pattern,
+                description: error.explanation || `Ошибка: ${error.pattern}`,
+                rule: error.correction,
+            };
+
+            await addOrUpdateGrammarConcept({
+                name: error.pattern,
+                nameRu: patternInfo.nameRu,
+                description: patternInfo.description,
+                examples: JSON.stringify([error.correction, userMessage]),
+                rule: patternInfo.rule || patternInfo.description,
+            });
+
+            grammarErrors.push({
+                pattern: error.pattern,
+                patternRu: patternInfo.nameRu,
+                description: error.explanation || patternInfo.description,
+                example: error.correction,
+                userMistake: error.mistake,
+            });
+        }
+
+        return grammarErrors;
+    } catch (e) {
+        console.error('Chat grammar analysis failed:', e);
+        return [];
+    }
 }

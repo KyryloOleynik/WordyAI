@@ -1,18 +1,16 @@
 // src/services/unifiedAIManager.ts
 // Unified AI Manager - single entry point for all AI operations
-// Automatically chooses between API keys and Local LLM
+// Uses external APIs only (Google Gemini, Perplexity)
 
-import { Platform } from 'react-native';
 import {
     getWorkingKey,
     markKeyFailed,
     getAllAPIKeys,
     getTimeoutRemaining
 } from './apiKeyService';
-import { llmManager } from './llmManager';
 
 // Types
-export type AIBackend = 'google' | 'perplexity' | 'local' | 'none';
+export type AIBackend = 'google' | 'perplexity' | 'none';
 
 export interface AIResponse {
     text: string;
@@ -25,7 +23,6 @@ export interface AIManagerStatus {
     activeBackend: AIBackend;
     google: { available: boolean; keyCount: number; timeoutMinutes: number };
     perplexity: { available: boolean; keyCount: number; timeoutMinutes: number };
-    local: { available: boolean; initializing: boolean; progress: number };
 }
 
 // Listeners for status changes
@@ -60,14 +57,12 @@ class UnifiedAIManager {
         const googleTimeout = googleKeys.find(k => k.isEnabled && k.timeoutUntil && k.timeoutUntil > now);
         const perplexityTimeout = perplexityKeys.find(k => k.isEnabled && k.timeoutUntil && k.timeoutUntil > now);
 
-        // Determine active backend
+        // Determine active backend (external APIs only)
         let activeBackend: AIBackend = 'none';
         if (googleActive) {
             activeBackend = 'google';
         } else if (perplexityActive) {
             activeBackend = 'perplexity';
-        } else if (llmManager.ready) {
-            activeBackend = 'local';
         }
 
         this.cachedStatus = {
@@ -81,11 +76,6 @@ class UnifiedAIManager {
                 available: !!perplexityActive,
                 keyCount: perplexityKeys.length,
                 timeoutMinutes: perplexityTimeout ? getTimeoutRemaining(perplexityTimeout) : 0
-            },
-            local: {
-                available: llmManager.ready,
-                initializing: llmManager.initializing,
-                progress: 0
             }
         };
 
@@ -134,34 +124,12 @@ class UnifiedAIManager {
             }
         }
 
-        // Fallback to Local LLM
-        if (llmManager.ready) {
-            try {
-                console.log('[UnifiedAI] Using Local LLM');
-                const text = await llmManager.complete(prompt, options?.jsonMode);
-                return { text, source: 'local', success: true };
-            } catch (error: any) {
-                console.error('[UnifiedAI] Local LLM failed:', error.message);
-            }
-        }
-
-        // Try to initialize local LLM if not ready
-        if (!llmManager.ready && !llmManager.initializing) {
-            try {
-                console.log('[UnifiedAI] Initializing Local LLM...');
-                await llmManager.initialize();
-                const text = await llmManager.complete(prompt, options?.jsonMode);
-                return { text, source: 'local', success: true };
-            } catch (error: any) {
-                console.error('[UnifiedAI] Failed to initialize Local LLM:', error.message);
-            }
-        }
-
+        // No APIs available
         return {
             text: '',
             source: 'none',
             success: false,
-            error: 'Нет доступных AI провайдеров. Добавьте API ключ или загрузите локальную модель.'
+            error: 'Нет доступных AI провайдеров. Добавьте API ключ в настройках.'
         };
     }
 
@@ -198,20 +166,7 @@ class UnifiedAIManager {
             }
         }
 
-        // Fallback to local LLM
-        if (llmManager.ready) {
-            try {
-                for await (const chunk of llmManager.completeStream(prompt)) {
-                    yield { text: chunk, source: 'local', done: false };
-                }
-                yield { text: '', source: 'local', done: true };
-                return;
-            } catch (error) {
-                console.error('[UnifiedAI] Local streaming failed');
-            }
-        }
-
-        yield { text: 'AI недоступен', source: 'none', done: true };
+        yield { text: 'AI недоступен. Добавьте API ключ в настройках.', source: 'none', done: true };
     }
 
     // ============ SPECIALIZED METHODS ============
@@ -481,7 +436,9 @@ Output JSON: {"score": 0.8, "feedback": "Отличный ответ!", "correct
 
     async generateStoryWithQuestions(
         topic: string,
-        level: 'A1-A2' | 'B1-B2' | 'C1-C2'
+        level: 'A1-A2' | 'B1-B2' | 'C1-C2',
+        vocabularyWords?: string[],
+        grammarFocus?: string[]
     ): Promise<{ title: string; story: string; questions: Array<{ question: string; correctAnswer: string }> } | null> {
         const levelGuide = {
             'A1-A2': 'Use simple vocabulary and short sentences. Present tense mostly.',
@@ -489,10 +446,20 @@ Output JSON: {"score": 0.8, "feedback": "Отличный ответ!", "correct
             'C1-C2': 'Use sophisticated vocabulary, idioms, and complex sentences.',
         };
 
+        // Build vocabulary section if words provided
+        const vocabSection = vocabularyWords && vocabularyWords.length > 0
+            ? `\nIMPORTANT: Incorporate these vocabulary words naturally into the story: ${vocabularyWords.join(', ')}.`
+            : '';
+
+        // Build grammar section if concepts provided
+        const grammarSection = grammarFocus && grammarFocus.length > 0
+            ? `\nIncorporate these grammar structures: ${grammarFocus.join(', ')}.`
+            : '';
+
         const prompt = `Create a short engaging story for English learners.
 Topic: ${topic}
 Language Level: ${level}
-Guidelines: ${levelGuide[level]}
+Guidelines: ${levelGuide[level]}${vocabSection}${grammarSection}
 
 The story should be 5-7 sentences long.
 Create 4 comprehension questions about the story (mix of detail and inference questions).

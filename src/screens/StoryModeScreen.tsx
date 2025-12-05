@@ -2,9 +2,12 @@ import { StyleSheet, Text, View, Pressable, ScrollView, TextInput, ActivityIndic
 import { useState, useEffect } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
+import { VProgress, VButton } from '@/components/ui/DesignSystem';
+import { CompletionScreen } from '@/components/ui/SharedComponents';
 import { unifiedAI } from '@/services/unifiedAIManager';
-import { addWord, getSettings, addXP, XP_REWARDS } from '@/services/storageService';
+import { addWord, getSettings, addXP, XP_REWARDS, getAllWords } from '@/services/storageService';
 import { translateWord } from '@/services/translationService';
+import { getGrammarConcepts } from '@/services/database';
 
 const STORY_TOPICS = [
     { id: 'adventure', label: '🏔️ Приключения' },
@@ -68,7 +71,33 @@ export default function StoryModeScreen() {
         setIsLoading(true);
 
         try {
-            const result = await unifiedAI.generateStoryWithQuestions(selectedTopic!, level);
+            // Load user's vocabulary and grammar to incorporate in story
+            const words = await getAllWords();
+            const grammar = await getGrammarConcepts();
+
+            // Select random words to practice (max 5)
+            const vocabWords = words
+                .filter(w => w.status !== 'known')
+                .slice(0, 10)
+                .sort(() => Math.random() - 0.5)
+                .slice(0, 5)
+                .map(w => w.text);
+
+            // Select grammar concepts to practice
+            const grammarFocus = grammar
+                .filter(g => g.errorCount > 0 || g.masteryScore < 0.5)
+                .slice(0, 2)
+                .map(g => g.name);
+
+            console.log('[StoryMode] Using vocabulary:', vocabWords);
+            console.log('[StoryMode] Using grammar:', grammarFocus);
+
+            const result = await unifiedAI.generateStoryWithQuestions(
+                selectedTopic!,
+                level,
+                vocabWords.length > 0 ? vocabWords : undefined,
+                grammarFocus.length > 0 ? grammarFocus : undefined
+            );
             if (result) {
                 setStory(result);
                 setStep('reading');
@@ -129,15 +158,10 @@ export default function StoryModeScreen() {
                 status: 'new',
                 timesShown: 0,
                 timesCorrect: 0,
+                timesWrong: 0,
                 lastReviewedAt: null,
                 nextReviewAt: Date.now(),
                 source: 'lookup',
-                translationCorrect: 0,
-                translationWrong: 0,
-                matchingCorrect: 0,
-                matchingWrong: 0,
-                lessonCorrect: 0,
-                lessonWrong: 0,
                 reviewCount: 0,
                 masteryScore: 0,
             });
@@ -367,6 +391,13 @@ export default function StoryModeScreen() {
                     <Text style={styles.progress}>
                         Вопрос {currentQuestionIndex + 1} из {story.questions.length}
                     </Text>
+                    <View style={styles.headerProgressBar}>
+                        <VProgress
+                            progress={(currentQuestionIndex + 1) / story.questions.length}
+                            height={6}
+                            color={colors.primary[400]}
+                        />
+                    </View>
                 </View>
 
                 <ScrollView contentContainerStyle={styles.questionContent}>
@@ -434,38 +465,18 @@ export default function StoryModeScreen() {
         }, []);
 
         return (
-            <View style={styles.container}>
-                <ScrollView contentContainerStyle={styles.resultsContent}>
-                    <View style={styles.resultsCard}>
-                        <Text style={styles.resultsEmoji}>
-                            {percentage >= 70 ? '🎉' : percentage >= 50 ? '👍' : '📚'}
-                        </Text>
-                        <Text style={styles.resultsScore}>{correctCount}/{totalQuestions}</Text>
-                        <Text style={styles.resultsPercentage}>{percentage}% правильно</Text>
-
-                        <View style={styles.xpEarned}>
-                            <Text style={styles.xpText}>+{xpEarned} XP</Text>
-                        </View>
-
-                        {addedWords.size > 0 && (
-                            <Text style={styles.wordsAddedText}>
-                                📚 {addedWords.size} новых слов в словаре!
-                            </Text>
-                        )}
-
-                        <Text style={styles.resultsMessage}>
-                            {percentage >= 70
-                                ? 'Отлично! Вы хорошо поняли историю!'
-                                : percentage >= 50
-                                    ? 'Хорошая работа! Продолжайте практиковаться!'
-                                    : 'Продолжайте читать и практиковаться!'}
-                        </Text>
-                    </View>
-                    <Pressable style={styles.primaryButton} onPress={restart}>
-                        <Text style={styles.primaryButtonText}>Новая история</Text>
-                    </Pressable>
-                </ScrollView>
-            </View>
+            <CompletionScreen
+                score={correctCount}
+                total={totalQuestions}
+                xpEarned={xpEarned}
+                newWordsCount={addedWords.size}
+                onRestart={restart}
+                onHome={() => navigation.goBack()}
+                title="История прочитана!"
+                message={percentage >= 70
+                    ? 'Отлично! Вы хорошо поняли историю!'
+                    : 'Продолжайте читать и практиковаться!'}
+            />
         );
     }
 
@@ -490,8 +501,15 @@ const styles = StyleSheet.create({
         ...typography.body,
     },
     header: {
+        display: 'flex',
         padding: spacing.xl,
         backgroundColor: colors.surface,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    headerProgressBar: {
+        flex: 1,
+        marginLeft: spacing.md,
     },
     title: {
         ...typography.h1,
@@ -501,6 +519,7 @@ const styles = StyleSheet.create({
     subtitle: {
         ...typography.body,
         color: colors.text.secondary,
+        textAlign: 'center',
     },
     progress: {
         ...typography.h3,

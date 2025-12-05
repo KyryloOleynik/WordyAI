@@ -1,21 +1,18 @@
 // src/services/aiService.ts
 // Unified AI Service with streaming support and API key management
+// Uses external APIs only (Google Gemini, Perplexity)
 
-import { Platform } from 'react-native';
 import {
     getWorkingKey,
     markKeyFailed,
-    APIKeyType,
     getAllAPIKeys,
-    isKeyInTimeout,
     getTimeoutRemaining
 } from './apiKeyService';
-import { llmManager } from './llmManager';
 
 // AI Service Response
 export interface AIServiceResponse {
     text: string;
-    source: 'google' | 'perplexity' | 'local' | 'none';
+    source: 'google' | 'perplexity' | 'none';
     success: boolean;
 }
 
@@ -23,7 +20,6 @@ export interface AIServiceResponse {
 export interface APIStatus {
     google: { available: boolean; inTimeout: boolean; timeoutMinutes: number; keyCount: number };
     perplexity: { available: boolean; inTimeout: boolean; timeoutMinutes: number; keyCount: number };
-    local: { available: boolean; loading: boolean; progress: number };
 }
 
 // Global status cache
@@ -58,11 +54,6 @@ export async function getAPIStatus(): Promise<APIStatus> {
             inTimeout: !!perplexityTimedOut,
             timeoutMinutes: perplexityTimedOut ? getTimeoutRemaining(perplexityTimedOut) : 0,
             keyCount: perplexityKeys.length,
-        },
-        local: {
-            available: llmManager.ready,
-            loading: llmManager.initializing,
-            progress: 0,
         },
     };
 
@@ -266,17 +257,7 @@ export async function getAICompletion(
         }
     }
 
-    // Fallback to local LLM
-    if (llmManager.ready) {
-        try {
-            console.log('Using Local LLM...');
-            const text = await llmManager.complete(prompt, options?.jsonMode);
-            return { text, source: 'local', success: true };
-        } catch (error) {
-            console.error('Local LLM failed:', error);
-        }
-    }
-
+    // No APIs available
     return { text: '', source: 'none', success: false };
 }
 
@@ -319,20 +300,7 @@ export async function* getAICompletionStream(prompt: string): AsyncGenerator<{ t
         }
     }
 
-    // Fallback to local LLM (may not support streaming on native)
-    if (llmManager.ready) {
-        try {
-            console.log('Using Local LLM (streaming)...');
-            for await (const chunk of llmManager.completeStream(prompt)) {
-                yield { text: chunk, source: 'local', done: false };
-            }
-            yield { text: '', source: 'local', done: true };
-            return;
-        } catch (error) {
-            console.error('Local LLM streaming failed:', error);
-        }
-    }
-
+    // No APIs available
     yield { text: 'AI недоступен. Добавьте API ключ в настройках.', source: 'none', done: true };
 }
 
@@ -368,19 +336,7 @@ export async function* getChatCompletionStream(
         }
     }
 
-    // Fallback to local LLM
-    if (llmManager.ready) {
-        try {
-            for await (const chunk of llmManager.chatStream(formattedMessages)) {
-                yield { text: chunk, source: 'local', done: false };
-            }
-            yield { text: '', source: 'local', done: true };
-            return;
-        } catch (error) {
-            console.error('Local chat streaming failed:', error);
-        }
-    }
-
+    // No APIs available
     yield { text: 'AI недоступен. Добавьте API ключ в настройках.', source: 'none', done: true };
 }
 

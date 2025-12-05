@@ -8,7 +8,7 @@ import { Platform } from 'react-native';
 // Database instance (singleton)
 let db: SQLite.SQLiteDatabase | null = null;
 
-// Word interface with extended metrics for learning tracking
+// Word interface with simplified metrics for learning tracking
 export interface DictionaryWord {
     id: string;
     text: string;
@@ -17,18 +17,12 @@ export interface DictionaryWord {
     cefrLevel: string;
     status: 'new' | 'learning' | 'known';
     timesShown: number;
-    timesCorrect: number;
+    timesCorrect: number;  // Total correct answers
+    timesWrong: number;    // Total wrong answers
     lastReviewedAt: number | null;
     nextReviewAt: number;
     source: 'manual' | 'lookup' | 'youtube' | 'lesson';
     createdAt: number;
-    // Extended metrics
-    translationCorrect: number;
-    translationWrong: number;
-    matchingCorrect: number;
-    matchingWrong: number;
-    lessonCorrect: number;
-    lessonWrong: number;
     reviewCount: number;
     masteryScore: number; // 0.0 - 1.0
 }
@@ -76,16 +70,11 @@ export async function initDatabase(): Promise<void> {
                 status TEXT NOT NULL DEFAULT 'new',
                 timesShown INTEGER NOT NULL DEFAULT 0,
                 timesCorrect INTEGER NOT NULL DEFAULT 0,
+                timesWrong INTEGER NOT NULL DEFAULT 0,
                 lastReviewedAt INTEGER,
                 nextReviewAt INTEGER NOT NULL,
                 source TEXT NOT NULL DEFAULT 'lookup',
                 createdAt INTEGER NOT NULL,
-                translationCorrect INTEGER NOT NULL DEFAULT 0,
-                translationWrong INTEGER NOT NULL DEFAULT 0,
-                matchingCorrect INTEGER NOT NULL DEFAULT 0,
-                matchingWrong INTEGER NOT NULL DEFAULT 0,
-                lessonCorrect INTEGER NOT NULL DEFAULT 0,
-                lessonWrong INTEGER NOT NULL DEFAULT 0,
                 reviewCount INTEGER NOT NULL DEFAULT 0,
                 masteryScore REAL NOT NULL DEFAULT 0.0
             );
@@ -117,15 +106,10 @@ export async function initDatabase(): Promise<void> {
         // Add new columns if they don't exist (for existing databases)
         try {
             await db.execAsync(`
-                ALTER TABLE words ADD COLUMN translationCorrect INTEGER NOT NULL DEFAULT 0;
-                ALTER TABLE words ADD COLUMN translationWrong INTEGER NOT NULL DEFAULT 0;
-                ALTER TABLE words ADD COLUMN matchingCorrect INTEGER NOT NULL DEFAULT 0;
-                ALTER TABLE words ADD COLUMN matchingWrong INTEGER NOT NULL DEFAULT 0;
-                ALTER TABLE words ADD COLUMN lessonCorrect INTEGER NOT NULL DEFAULT 0;
-                ALTER TABLE words ADD COLUMN lessonWrong INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE words ADD COLUMN timesWrong INTEGER NOT NULL DEFAULT 0;
                 ALTER TABLE words ADD COLUMN reviewCount INTEGER NOT NULL DEFAULT 0;
                 ALTER TABLE words ADD COLUMN masteryScore REAL NOT NULL DEFAULT 0.0;
-        `);
+            `);
         } catch {
             // Columns already exist, ignore error
         }
@@ -248,7 +232,8 @@ export async function addWord(word: Omit<DictionaryWord, 'id' | 'createdAt'>): P
         const existing = await getWordByText(word.text);
         if (existing) return existing;
 
-        const id = Date.now().toString();
+        // Generate unique ID with timestamp + random suffix to prevent duplicates
+        const id = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         const createdAt = Date.now();
 
         await db.runAsync(
@@ -335,6 +320,24 @@ export async function getWordsForReview(limit: number = 20): Promise<DictionaryW
     }
 }
 
+/**
+ * Get a single word by ID with fresh data from database
+ */
+export async function getWordById(wordId: string): Promise<DictionaryWord | null> {
+    if (!db) return null;
+
+    try {
+        const word = await db.getFirstAsync<DictionaryWord>(
+            'SELECT * FROM words WHERE id = ?',
+            [wordId]
+        );
+        return word || null;
+    } catch (error) {
+        console.error('Error getting word by ID:', error);
+        return null;
+    }
+}
+
 export async function getWordCount(): Promise<number> {
     if (!db) return 0;
 
@@ -388,87 +391,44 @@ export async function searchWords(query: string, limit: number = 20): Promise<Di
 
 // ============ WORD METRICS OPERATIONS ============
 
-export type ExerciseType = 'translation' | 'matching' | 'lesson' | 'flashcard';
-
 /**
  * Update word metrics after an exercise
+ * Simple approach: only track timesCorrect and timesWrong
  */
 export async function updateWordMetrics(
     wordId: string,
-    exerciseType: ExerciseType,
+    _exerciseType: string, // Kept for API compatibility, but not used
     isCorrect: boolean
 ): Promise<void> {
-    if (!db) return;
+    console.log('[DB] updateWordMetrics called:', { wordId, isCorrect });
+    if (!db) {
+        console.log('[DB] updateWordMetrics: db is null!');
+        return;
+    }
 
     try {
         const now = Date.now();
 
-        // Build update query based on exercise type
-        let correctField = 'timesCorrect';
-        let wrongField = 'timesShown'; // timesShown acts as total attempts for flashcards
-
-        if (exerciseType === 'translation') {
-            correctField = isCorrect ? 'translationCorrect' : 'translationCorrect';
-            wrongField = isCorrect ? 'translationWrong' : 'translationWrong';
-        } else if (exerciseType === 'matching') {
-            correctField = 'matchingCorrect';
-            wrongField = 'matchingWrong';
-        } else if (exerciseType === 'lesson') {
-            correctField = 'lessonCorrect';
-            wrongField = 'lessonWrong';
-        }
-
-        if (exerciseType === 'translation') {
-            if (isCorrect) {
-                await db.runAsync(
-                    `UPDATE words SET translationCorrect = translationCorrect + 1,
-            reviewCount = reviewCount + 1, lastReviewedAt = ? WHERE id = ? `,
-                    [now, wordId]
-                );
-            } else {
-                await db.runAsync(
-                    `UPDATE words SET translationWrong = translationWrong + 1,
-            reviewCount = reviewCount + 1, lastReviewedAt = ? WHERE id = ? `,
-                    [now, wordId]
-                );
-            }
-        } else if (exerciseType === 'matching') {
-            if (isCorrect) {
-                await db.runAsync(
-                    `UPDATE words SET matchingCorrect = matchingCorrect + 1,
-            reviewCount = reviewCount + 1, lastReviewedAt = ? WHERE id = ? `,
-                    [now, wordId]
-                );
-            } else {
-                await db.runAsync(
-                    `UPDATE words SET matchingWrong = matchingWrong + 1,
-            reviewCount = reviewCount + 1, lastReviewedAt = ? WHERE id = ? `,
-                    [now, wordId]
-                );
-            }
-        } else if (exerciseType === 'lesson') {
-            if (isCorrect) {
-                await db.runAsync(
-                    `UPDATE words SET lessonCorrect = lessonCorrect + 1,
-            reviewCount = reviewCount + 1, lastReviewedAt = ? WHERE id = ? `,
-                    [now, wordId]
-                );
-            } else {
-                await db.runAsync(
-                    `UPDATE words SET lessonWrong = lessonWrong + 1,
-            reviewCount = reviewCount + 1, lastReviewedAt = ? WHERE id = ? `,
-                    [now, wordId]
-                );
-            }
-        } else {
-            // flashcard
+        // Simple update: increment correct or wrong counter
+        if (isCorrect) {
             await db.runAsync(
-                `UPDATE words SET
-        timesShown = timesShown + 1,
-            timesCorrect = timesCorrect + ?,
-            reviewCount = reviewCount + 1,
-            lastReviewedAt = ? WHERE id = ? `,
-                [isCorrect ? 1 : 0, now, wordId]
+                `UPDATE words SET 
+                    timesCorrect = timesCorrect + 1,
+                    timesShown = timesShown + 1,
+                    reviewCount = reviewCount + 1,
+                    lastReviewedAt = ? 
+                WHERE id = ?`,
+                [now, wordId]
+            );
+        } else {
+            await db.runAsync(
+                `UPDATE words SET 
+                    timesWrong = timesWrong + 1,
+                    timesShown = timesShown + 1,
+                    reviewCount = reviewCount + 1,
+                    lastReviewedAt = ? 
+                WHERE id = ?`,
+                [now, wordId]
             );
         }
 
@@ -495,17 +455,10 @@ export async function recalculateMasteryScore(wordId: string): Promise<number> {
 
         if (!word) return 0;
 
-        // Calculate total correct and attempts across all exercise types
-        const totalCorrect = (word.translationCorrect || 0) +
-            (word.matchingCorrect || 0) +
-            (word.lessonCorrect || 0) +
-            (word.timesCorrect || 0);
-
-        const totalWrong = (word.translationWrong || 0) +
-            (word.matchingWrong || 0) +
-            (word.lessonWrong || 0);
-
-        const totalAttempts = totalCorrect + totalWrong + (word.timesShown || 0);
+        // Simple calculation using timesCorrect and timesWrong
+        const totalCorrect = word.timesCorrect || 0;
+        const totalWrong = word.timesWrong || 0;
+        const totalAttempts = totalCorrect + totalWrong;
 
         // Accuracy component (0-1)
         const accuracy = totalAttempts > 0 ? totalCorrect / totalAttempts : 0;

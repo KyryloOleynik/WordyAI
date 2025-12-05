@@ -2,7 +2,6 @@ import { StyleSheet, Text, View, ScrollView, Pressable, TextInput, Modal, Activi
 import { useState, useCallback } from 'react';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
-import { useLocalLLM } from '@/hooks/useLocalLLM';
 import * as Speech from 'expo-speech';
 import * as ImagePicker from 'expo-image-picker';
 import { unifiedAI } from '@/services/unifiedAIManager';
@@ -12,6 +11,7 @@ import {
     updateWord,
     deleteWord,
     getSettings,
+    getWordById,
     DictionaryWord,
     UserSettings
 } from '@/services/storageService';
@@ -22,7 +22,6 @@ type MainTab = 'words' | 'grammar';
 
 export default function MyDictionaryScreen() {
     const navigation = useNavigation<any>();
-    const { isReady, lookupWord } = useLocalLLM();
 
     const [mainTab, setMainTab] = useState<MainTab>('words');
     const [words, setWords] = useState<DictionaryWord[]>([]);
@@ -36,6 +35,105 @@ export default function MyDictionaryScreen() {
     const [newWord, setNewWord] = useState('');
     const [isAddingWord, setIsAddingWord] = useState(false);
     const [isSpeaking, setIsSpeaking] = useState(false);
+    const [isScanning, setIsScanning] = useState(false);
+    const [isLoadingTranslation, setIsLoadingTranslation] = useState(false);
+
+    // Manually load translation for selected word
+    const loadTranslation = async () => {
+        if (!selectedWord) return;
+        setIsLoadingTranslation(true);
+
+        try {
+            const prompt = `Translate the English word "${selectedWord.text}" to Russian.
+Provide a brief definition in English.
+Output JSON only: {"translation": "русский перевод", "definition": "brief English definition", "cefrLevel": "A1/A2/B1/B2/C1/C2"}`;
+
+            const response = await unifiedAI.generateText(prompt, { jsonMode: true });
+            console.log('[loadTranslation] AI response:', response.success, response.text?.substring(0, 100));
+
+            if (response.success) {
+                const cleaned = response.text.replace(/```json/gi, '').replace(/```/g, '').trim();
+                const data = JSON.parse(cleaned);
+                console.log('[loadTranslation] Parsed data:', data);
+                console.log('[loadTranslation] Updating word id:', selectedWord.id);
+
+                await updateWord(selectedWord.id, {
+                    definition: data.definition || '',
+                    translation: data.translation || '',
+                    cefrLevel: data.cefrLevel || selectedWord.cefrLevel,
+                });
+                console.log('[loadTranslation] updateWord completed');
+
+                // Update selected word and reload data
+                setSelectedWord({
+                    ...selectedWord,
+                    definition: data.definition || '',
+                    translation: data.translation || '',
+                    cefrLevel: data.cefrLevel || selectedWord.cefrLevel,
+                });
+                await loadData();
+                console.log('[loadTranslation] loadData completed');
+            }
+        } catch (e) {
+            console.error('Failed to load translation:', e);
+        } finally {
+            setIsLoadingTranslation(false);
+        }
+    };
+
+    // Photo scanning for word extraction
+    const handlePhotoScan = async () => {
+        try {
+            const { status } = await ImagePicker.requestCameraPermissionsAsync();
+            if (status !== 'granted') {
+                Alert.alert('Ошибка', 'Нужно разрешение на доступ к камере');
+                return;
+            }
+
+            const result = await ImagePicker.launchCameraAsync({
+                base64: true,
+                quality: 0.7,
+            });
+
+            if (result.canceled || !result.assets?.[0]?.base64) return;
+
+            setIsScanning(true);
+            const extracted = await unifiedAI.extractWordsFromImage(result.assets[0].base64);
+
+            if (!extracted || extracted.length === 0) {
+                Alert.alert('Результат', 'Не удалось распознать слова на фото');
+                setIsScanning(false);
+                return;
+            }
+
+            // Add all extracted words
+            for (const item of extracted) {
+                await addWord({
+                    text: item.word.toLowerCase(),
+                    definition: '',
+                    translation: item.translation,
+                    cefrLevel: 'B1',
+                    status: 'new',
+                    timesShown: 0,
+                    timesCorrect: 0,
+                    timesWrong: 0,
+                    lastReviewedAt: null,
+                    nextReviewAt: Date.now(),
+                    source: 'manual',
+                    reviewCount: 0,
+                    masteryScore: 0,
+                });
+            }
+
+            await loadData();
+            Alert.alert('✅ Готово!', `Добавлено ${extracted.length} слов из фото`);
+        } catch (error) {
+            console.error('Photo scan error:', error);
+            Alert.alert('Ошибка', 'Не удалось обработать фото');
+        } finally {
+            setIsScanning(false);
+        }
+    };
 
     const loadData = async () => {
         const [w, s, g] = await Promise.all([getAllWords(), getSettings(), getGrammarConcepts()]);
@@ -85,15 +183,10 @@ export default function MyDictionaryScreen() {
                     status: 'new',
                     timesShown: 0,
                     timesCorrect: 0,
+                    timesWrong: 0,
                     lastReviewedAt: null,
                     nextReviewAt: Date.now(),
                     source: 'manual',
-                    translationCorrect: 0,
-                    translationWrong: 0,
-                    matchingCorrect: 0,
-                    matchingWrong: 0,
-                    lessonCorrect: 0,
-                    lessonWrong: 0,
                     reviewCount: 0,
                     masteryScore: 0,
                 });
@@ -103,24 +196,39 @@ export default function MyDictionaryScreen() {
             setNewWord('');
             setShowAddModal(false);
 
-            // Enrich words with AI in background (non-blocking)
-            if (isReady) {
+            // Enrich words with AI in background (non-blocking but sequential)
+            // Run as a single async task to process all words one by one
+            (async () => {
                 for (const wordText of wordList) {
-                    lookupWord(wordText).then(async (result) => {
-                        if (result) {
-                            const existingWord = words.find(w => w.text === wordText);
-                            if (existingWord && !existingWord.translation) {
+                    try {
+                        // Get fresh word list from DB for each word
+                        const freshWords = await getAllWords();
+                        const existingWord = freshWords.find(w => w.text === wordText);
+
+                        if (existingWord && !existingWord.translation) {
+                            // Use unifiedAI to get translation
+                            const prompt = `Translate the English word "${wordText}" to Russian. 
+Provide a brief definition in English.
+Output JSON only: {"translation": "русский перевод", "definition": "brief English definition", "cefrLevel": "A1/A2/B1/B2/C1/C2"}`;
+
+                            const response = await unifiedAI.generateText(prompt, { jsonMode: true });
+                            if (response.success) {
+                                const cleaned = response.text.replace(/```json/gi, '').replace(/```/g, '').trim();
+                                const data = JSON.parse(cleaned);
+
                                 await updateWord(existingWord.id, {
-                                    definition: result.definition || '',
-                                    translation: result.translation || '',
-                                    cefrLevel: result.cefrLevel || 'B1',
+                                    definition: data.definition || '',
+                                    translation: data.translation || '',
+                                    cefrLevel: data.cefrLevel || 'B1',
                                 });
                                 loadData(); // Refresh to show updated data
                             }
                         }
-                    }).catch(() => { }); // Ignore AI errors
+                    } catch (e) {
+                        console.log('Background enrichment failed for:', wordText);
+                    }
                 }
-            }
+            })();
         } catch (error) {
             console.error('Error adding word:', error);
         } finally {
@@ -135,8 +243,10 @@ export default function MyDictionaryScreen() {
         setSelectedWord(null);
     };
 
-    const openWordDetail = (word: DictionaryWord) => {
-        setSelectedWord(word);
+    const openWordDetail = async (word: DictionaryWord) => {
+        // Fetch fresh data from database to ensure metrics are up-to-date
+        const freshWord = await getWordById(word.id);
+        setSelectedWord(freshWord || word);
         setShowDetailModal(true);
     };
 
@@ -247,12 +357,19 @@ export default function MyDictionaryScreen() {
                     {/* Search */}
                     <View style={styles.searchContainer}>
                         <TextInput
-                            style={styles.searchInput}
+                            style={[styles.searchInput, { flex: 1 }]}
                             placeholder="Поиск слов..."
                             placeholderTextColor={colors.text.tertiary}
                             value={searchQuery}
                             onChangeText={setSearchQuery}
                         />
+                        <Pressable
+                            style={styles.cameraButton}
+                            onPress={handlePhotoScan}
+                            disabled={isScanning}
+                        >
+                            <Text style={styles.cameraButtonText}>{isScanning ? '⏳' : '📷'}</Text>
+                        </Pressable>
                     </View>
 
                     {/* Filter Tabs */}
@@ -411,44 +528,40 @@ export default function MyDictionaryScreen() {
                                     <Text style={styles.detailDefinition}>{selectedWord.definition || 'No definition'}</Text>
                                 </View>
 
-                                {/* Stats - Combined metrics from all exercises */}
+                                {/* Load Translation Button - only if missing */}
+                                {(!selectedWord.translation || !selectedWord.definition) && (
+                                    <Pressable
+                                        style={[styles.loadTranslationButton, isLoadingTranslation && styles.disabledButton]}
+                                        onPress={loadTranslation}
+                                        disabled={isLoadingTranslation}
+                                    >
+                                        {isLoadingTranslation ? (
+                                            <ActivityIndicator size="small" color={colors.text.inverse} />
+                                        ) : (
+                                            <Text style={styles.loadTranslationText}>✨ Подгрузить перевод</Text>
+                                        )}
+                                    </Pressable>
+                                )}
+
+                                {/* Stats - Simplified correct/wrong metrics */}
                                 <View style={styles.statsRow}>
                                     <View style={styles.statItem}>
                                         <Text style={styles.statValue}>
-                                            {selectedWord.reviewCount ||
-                                                (selectedWord.translationCorrect + selectedWord.translationWrong +
-                                                    selectedWord.matchingCorrect + selectedWord.matchingWrong +
-                                                    selectedWord.lessonCorrect + selectedWord.lessonWrong) ||
-                                                selectedWord.timesShown || 0}
+                                            {selectedWord.timesShown || 0}
                                         </Text>
                                         <Text style={styles.statLabel}>Повторений</Text>
                                     </View>
                                     <View style={styles.statItem}>
                                         <Text style={styles.statValue}>
-                                            {(selectedWord.translationCorrect || 0) +
-                                                (selectedWord.matchingCorrect || 0) +
-                                                (selectedWord.lessonCorrect || 0) ||
-                                                selectedWord.timesCorrect || 0}
+                                            {selectedWord.timesCorrect || 0}
                                         </Text>
                                         <Text style={styles.statLabel}>Правильно</Text>
                                     </View>
                                     <View style={styles.statItem}>
                                         <Text style={styles.statValue}>
-                                            {(() => {
-                                                const correct = (selectedWord.translationCorrect || 0) +
-                                                    (selectedWord.matchingCorrect || 0) +
-                                                    (selectedWord.lessonCorrect || 0);
-                                                const wrong = (selectedWord.translationWrong || 0) +
-                                                    (selectedWord.matchingWrong || 0) +
-                                                    (selectedWord.lessonWrong || 0);
-                                                const total = correct + wrong;
-                                                if (total === 0 && selectedWord.timesShown > 0) {
-                                                    return Math.round((selectedWord.timesCorrect / selectedWord.timesShown) * 100);
-                                                }
-                                                return total > 0 ? Math.round((correct / total) * 100) : 0;
-                                            })()}%
+                                            {selectedWord.timesWrong || 0}
                                         </Text>
-                                        <Text style={styles.statLabel}>Точность</Text>
+                                        <Text style={styles.statLabel}>Неправильно</Text>
                                     </View>
                                 </View>
 
@@ -456,7 +569,7 @@ export default function MyDictionaryScreen() {
                                 {selectedWord.masteryScore !== undefined && (
                                     <View style={styles.masteryRow}>
                                         <Text style={styles.masteryLabel}>Усвоение:</Text>
-                                        <View style={styles.masteryBar}>
+                                        <View style={styles.masteryTrackBig}>
                                             <View style={[styles.masteryFill, { width: `${Math.round((selectedWord.masteryScore || 0) * 100)}%` }]} />
                                         </View>
                                         <Text style={styles.masteryPercent}>{Math.round((selectedWord.masteryScore || 0) * 100)}%</Text>
@@ -500,7 +613,10 @@ const styles = StyleSheet.create({
         backgroundColor: colors.background,
     },
     searchContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
         padding: spacing.sm,
+        gap: spacing.sm,
         backgroundColor: colors.surface,
     },
     searchInput: {
@@ -510,6 +626,17 @@ const styles = StyleSheet.create({
         paddingVertical: spacing.md,
         ...typography.body,
         color: colors.text.primary,
+    },
+    cameraButton: {
+        backgroundColor: colors.primary[300],
+        width: 44,
+        height: 44,
+        borderRadius: borderRadius.lg,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    cameraButtonText: {
+        fontSize: 20,
     },
     filterContainer: {
         flexDirection: 'row',
@@ -882,10 +1009,17 @@ const styles = StyleSheet.create({
         ...typography.caption,
         color: colors.text.tertiary,
     },
-    masteryBar: {
+    masteryTrackBig: {
         flex: 1,
         height: 8,
         backgroundColor: colors.border.light,
+        borderRadius: borderRadius.sm,
+        overflow: 'hidden',
+    },
+    masteryBar: {
+        flex: 1,
+        height: 8,
+        backgroundColor: colors.accent.green,
         borderRadius: borderRadius.sm,
         overflow: 'hidden',
     },
@@ -931,6 +1065,19 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     grammarTestButtonText: {
+        ...typography.bodySmall,
+        color: colors.text.inverse,
+        fontWeight: '600',
+    },
+    // Load translation button
+    loadTranslationButton: {
+        backgroundColor: colors.accent.blue,
+        paddingVertical: spacing.sm,
+        paddingHorizontal: spacing.lg,
+        borderRadius: borderRadius.md,
+        alignItems: 'center',
+    },
+    loadTranslationText: {
         ...typography.bodySmall,
         color: colors.text.inverse,
         fontWeight: '600',

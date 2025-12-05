@@ -79,17 +79,18 @@ export function getLevelTitle(level: number): string {
     return LEVEL_TITLES[Math.min(level - 1, LEVEL_TITLES.length - 1)] || 'Supreme';
 }
 
-// XP rewards for different actions
+// XP rewards for different actions (reduced by 3x)
 export const XP_REWARDS = {
-    WORD_CORRECT: 5,
-    WORD_CORRECT_STREAK: 8,
-    WORD_EASY: 3,
-    STORY_COMPLETE: 25,
-    STORY_PERFECT: 50,
-    TRANSLATION_CORRECT: 10,
-    CHAT_MESSAGE: 3,
-    DAILY_GOAL_COMPLETE: 15,
-    STREAK_BONUS: 5,
+    WORD_CORRECT: 2,
+    WORD_CORRECT_STREAK: 3,
+    WORD_EASY: 1,
+    STORY_COMPLETE: 8,
+    STORY_PERFECT: 17,
+    TRANSLATION_CORRECT: 3,
+    CHAT_MESSAGE: 1,
+    DAILY_GOAL_COMPLETE: 5,
+    STREAK_BONUS: 2,
+    EXERCISE_COMPLETE: 3,
 };
 
 // Initialize database at app startup
@@ -188,6 +189,80 @@ export async function getWordsForReview(limit: number = 20): Promise<db.Dictiona
     }
 
     return db.getWordsForReview(limit);
+}
+
+export async function getWordById(wordId: string): Promise<db.DictionaryWord | null> {
+    await ensureDbInitialized();
+
+    if (Platform.OS === 'web') {
+        const words = await getAllWords();
+        return words.find(w => w.id === wordId) || null;
+    }
+
+    return db.getWordById(wordId);
+}
+
+/**
+ * Update word metrics - works on both web and native platforms
+ */
+export async function updateWordMetrics(
+    wordId: string,
+    _exerciseType: string,
+    isCorrect: boolean
+): Promise<void> {
+    await ensureDbInitialized();
+
+    if (Platform.OS === 'web') {
+        // Web fallback - update via AsyncStorage
+        const words = await getAllWords();
+        const index = words.findIndex(w => w.id === wordId);
+        if (index !== -1) {
+            const word = words[index];
+            const now = Date.now();
+
+            if (isCorrect) {
+                words[index] = {
+                    ...word,
+                    timesCorrect: (word.timesCorrect || 0) + 1,
+                    timesShown: (word.timesShown || 0) + 1,
+                    reviewCount: (word.reviewCount || 0) + 1,
+                    lastReviewedAt: now,
+                };
+            } else {
+                words[index] = {
+                    ...word,
+                    timesWrong: (word.timesWrong || 0) + 1,
+                    timesShown: (word.timesShown || 0) + 1,
+                    reviewCount: (word.reviewCount || 0) + 1,
+                    lastReviewedAt: now,
+                };
+            }
+
+            // Recalculate mastery score
+            const totalCorrect = words[index].timesCorrect || 0;
+            const totalWrong = words[index].timesWrong || 0;
+            const totalAttempts = totalCorrect + totalWrong;
+            const accuracy = totalAttempts > 0 ? totalCorrect / totalAttempts : 0;
+            const repetitionFactor = Math.min((words[index].reviewCount || 0) / 10, 1);
+            words[index].masteryScore = accuracy * 0.7 + repetitionFactor * 0.3;
+
+            // Update status
+            if (words[index].status === 'new' && words[index].reviewCount > 0) {
+                words[index].status = 'learning';
+            } else if (words[index].status === 'learning' &&
+                words[index].masteryScore >= 0.8 &&
+                (words[index].reviewCount || 0) >= 5) {
+                words[index].status = 'known';
+            }
+
+            await AsyncStorage.setItem(STORAGE_KEYS.WORDS, JSON.stringify(words));
+            console.log('[StorageService] Web: Updated metrics for', wordId, isCorrect ? 'correct' : 'wrong');
+        }
+        return;
+    }
+
+    // Native - use SQLite
+    await db.updateWordMetrics(wordId, _exerciseType, isCorrect);
 }
 
 // SM-2 Algorithm
