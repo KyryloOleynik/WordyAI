@@ -5,7 +5,6 @@ import { View, ActivityIndicator } from 'react-native';
 import OnboardingScreen from '../screens/OnboardingScreen';
 import HomeScreen from '../screens/HomeScreen';
 import YouTubeIngestionScreen from '../screens/YouTubeIngestionScreen';
-import PracticeScreen from '../screens/PracticeScreen';
 import MyDictionaryScreen from '../screens/MyDictionaryScreen';
 import DictionaryScreen from '../screens/DictionaryScreen';
 import ChatModeScreen from '../screens/ChatModeScreen';
@@ -14,6 +13,7 @@ import StoryModeScreen from '../screens/StoryModeScreen';
 import TranslationModeScreen from '../screens/TranslationModeScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import MatchingModeScreen from '../screens/MatchingModeScreen';
+import LessonsScreen from '../screens/LessonsScreen';
 import { colors, typography } from '@/lib/design/theme';
 import { getSettings } from '@/services/storageService';
 
@@ -84,11 +84,6 @@ export default function AppNavigator() {
                     options={{ title: 'Добавить контент' }}
                 />
                 <Stack.Screen
-                    name="Practice"
-                    component={PracticeScreen}
-                    options={{ title: 'Практика' }}
-                />
-                <Stack.Screen
                     name="MyDictionary"
                     component={MyDictionaryScreen}
                     options={{ title: 'Мой словарь' }}
@@ -132,6 +127,11 @@ export default function AppNavigator() {
                     name="MatchingMode"
                     component={MatchingModeScreen}
                     options={{ title: 'Соединение' }}
+                />
+                <Stack.Screen
+                    name="Lessons"
+                    component={LessonsScreen}
+                    options={{ title: 'Уроки' }}
                 />
             </Stack.Navigator>
         </NavigationContainer>

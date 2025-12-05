@@ -1,13 +1,12 @@
-import { StyleSheet, Text, View, TextInput, Pressable, ScrollView, KeyboardAvoidingView, Platform, Modal } from 'react-native';
+import { StyleSheet, Text, View, TextInput, Pressable, ScrollView, KeyboardAvoidingView, Platform, Modal, ActivityIndicator } from 'react-native';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
-import { getChatCompletionStream, getAPIStatus, APIStatus } from '@/services/aiService';
-import { llmManager } from '@/services/llmManager';
-import { ModelDownloadIndicator } from '@/components/ui/ModelDownloadIndicator';
+import { unifiedAI } from '@/services/unifiedAIManager';
 import TappableText from '@/components/ui/TappableText';
 import { LoadingIndicator } from '@/components/ui/SharedComponents';
-import { saveChatSession, ChatSession, ChatMessage as StoredMessage } from '@/services/storageService';
+import { saveChatSession, ChatSession, ChatMessage as StoredMessage, getAllWords } from '@/services/storageService';
+import { getGrammarConcepts, GrammarConcept, DictionaryWord } from '@/services/database';
 
 interface ChatMessage {
     id: string;
@@ -19,6 +18,7 @@ interface ChatMessage {
 }
 
 const TOPICS = [
+    { id: 'ai_suggested', label: '🤖 AI предлагает', value: 'ai_suggested' },
     { id: 'travel', label: '✈️ Путешествия', value: 'traveling and vacation' },
     { id: 'work', label: '💼 Работа', value: 'work and career' },
     { id: 'hobbies', label: '🎨 Хобби', value: 'hobbies and free time' },
@@ -31,8 +31,7 @@ const TOPICS = [
 export default function ChatModeScreen() {
     const navigation = useNavigation<any>();
 
-    const [isModelReady, setIsModelReady] = useState(llmManager.ready);
-    const [downloadProgress, setDownloadProgress] = useState<{ progress: number; text: string } | null>(null);
+    // No more waiting for model - unifiedAI handles backend selection
     const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
     const [customTopic, setCustomTopic] = useState('');
     const [showCustomInput, setShowCustomInput] = useState(false);
@@ -41,30 +40,9 @@ export default function ChatModeScreen() {
     const [isLoading, setIsLoading] = useState(false);
     const [sessionId, setSessionId] = useState<string | null>(null);
     const [streamingText, setStreamingText] = useState('');
+    const [aiTopicLoading, setAiTopicLoading] = useState(false);
+    const [aiSuggestedTopic, setAiSuggestedTopic] = useState<string | null>(null);
     const scrollViewRef = useRef<ScrollView>(null);
-
-    // Initialize LLM on first focus
-    useFocusEffect(
-        useCallback(() => {
-            if (!llmManager.ready && !llmManager.initializing) {
-                const unsubscribe = llmManager.onProgress((progress, text) => {
-                    setDownloadProgress({ progress, text });
-                });
-
-                llmManager.initialize().then(() => {
-                    setIsModelReady(true);
-                    setDownloadProgress(null);
-                }).catch(err => {
-                    console.error('Failed to load LLM:', err);
-                    setDownloadProgress(null);
-                });
-
-                return unsubscribe;
-            } else {
-                setIsModelReady(llmManager.ready);
-            }
-        }, [])
-    );
 
     // Save chat session after each assistant message
     const saveSession = async (msgs: ChatMessage[], topic: string, custom?: string) => {
@@ -91,9 +69,77 @@ export default function ChatModeScreen() {
         await saveChatSession(session);
     };
 
+    // Generate AI topic based on user's dictionary and grammar
+    const startAITopic = async () => {
+        setAiTopicLoading(true);
+        try {
+            // Get user's words and grammar concepts
+            const words = await getAllWords();
+            const grammar = await getGrammarConcepts();
+
+            // Select random words to incorporate
+            const recentWords = words.slice(0, 10).map(w => w.text);
+            const grammarToReview = grammar.filter(g => g.errorCount > 0 || g.masteryScore < 0.5);
+
+            // Generate topic suggestion
+            let topicSuggestion = '';
+            if (recentWords.length > 0 || grammarToReview.length > 0) {
+                const wordsToUse = recentWords.slice(0, 3).join(', ') || 'everyday topics';
+                const grammarToUse = grammarToReview.slice(0, 2).map(g => g.name).join(', ') || '';
+
+                // Create a contextual topic
+                if (grammarToUse) {
+                    topicSuggestion = `Practice using ${wordsToUse} with ${grammarToUse} structures`;
+                } else if (wordsToUse) {
+                    topicSuggestion = `Conversation about ${wordsToUse}`;
+                } else {
+                    topicSuggestion = 'General English conversation practice';
+                }
+            } else {
+                topicSuggestion = 'Getting to know each other - introductions and basic questions';
+            }
+
+            setAiSuggestedTopic(topicSuggestion);
+            setSelectedTopic(topicSuggestion);
+
+            // Create initial message with words to practice
+            const wordsNote = recentWords.length > 0
+                ? `\n\nСлова для практики: ${recentWords.slice(0, 5).join(', ')}`
+                : '';
+            const grammarNote = grammarToReview.length > 0
+                ? `\nГрамматика: ${grammarToReview.slice(0, 2).map(g => g.nameRu).join(', ')}`
+                : '';
+
+            const initialMessage: ChatMessage = {
+                id: '0',
+                role: 'assistant',
+                content: `🤖 AI выбрал тему для тебя: "${topicSuggestion}"${wordsNote}${grammarNote}\n\nПиши мне на английском, а я буду исправлять ошибки. Попробуй использовать слова из своего словаря!`,
+                timestamp: Date.now(),
+            };
+            setMessages([initialMessage]);
+        } catch (error) {
+            console.error('Error generating AI topic:', error);
+            // Fallback to general topic
+            setSelectedTopic('general conversation');
+            setMessages([{
+                id: '0',
+                role: 'assistant',
+                content: 'Давай просто поболтаем на английском! Я буду исправлять ошибки. О чём хочешь поговорить?',
+                timestamp: Date.now(),
+            }]);
+        } finally {
+            setAiTopicLoading(false);
+        }
+    };
+
     const startChat = (topic: typeof TOPICS[0]) => {
         if (topic.id === 'custom') {
             setShowCustomInput(true);
+            return;
+        }
+
+        if (topic.id === 'ai_suggested') {
+            startAITopic();
             return;
         }
 
@@ -138,42 +184,68 @@ export default function ChatModeScreen() {
         setStreamingText('');
 
         try {
-            // Build messages for API
-            const chatMessages = [
-                { role: 'system' as const, content: `You are an English conversation partner helping a Russian speaker practice English. Topic: ${selectedTopic || 'general conversation'}. If the user made grammar or vocabulary mistakes, start with a BRIEF correction. Keep responses SHORT (2-3 sentences max). Be encouraging.` },
-                ...newMessages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
-            ];
+            // Build prompt for the conversation
+            const conversationHistory = newMessages
+                .slice(-6)
+                .map(m => `${m.role === 'user' ? 'Student' : 'Teacher'}: ${m.content}`)
+                .join('\n');
 
-            // Create placeholder for streaming
+            const prompt = `You are an English conversation partner helping a Russian speaker practice English.
+Topic: ${selectedTopic || 'general conversation'}
+
+Conversation so far:
+${conversationHistory}
+
+If the student made grammar or vocabulary mistakes, start with a BRIEF correction in this format:
+"❌ [mistake] → ✅ [correction]"
+
+Then continue the conversation naturally. Keep your response SHORT (2-3 sentences max). Be encouraging. Respond in English.`;
+
             const assistantId = (Date.now() + 1).toString();
             let fullText = '';
 
-            // Stream the response (tries Google API first, then Perplexity, then local)
-            for await (const { text, source, done } of getChatCompletionStream(chatMessages)) {
-                if (done) break;
-                fullText += text;
-                setStreamingText(fullText);
+            // Add assistant message placeholder
+            setMessages(prev => [...prev, {
+                id: assistantId,
+                role: 'assistant',
+                content: '...',
+                timestamp: Date.now(),
+                isStreaming: true,
+            }]);
 
-                // Update message in real-time
-                setMessages(prev => {
-                    const updated = [...prev];
-                    const existingIdx = updated.findIndex(m => m.id === assistantId);
-                    if (existingIdx >= 0) {
-                        updated[existingIdx] = {
-                            ...updated[existingIdx],
-                            content: fullText,
-                        };
-                    } else {
-                        updated.push({
-                            id: assistantId,
-                            role: 'assistant',
-                            content: fullText,
-                            timestamp: Date.now(),
-                            isStreaming: true,
-                        });
-                    }
-                    return updated;
-                });
+            // Try streaming first with timeout
+            let streamSucceeded = false;
+            const streamTimeout = setTimeout(() => {
+                if (!streamSucceeded && fullText === '') {
+                    // Streaming didn't work, fallback to non-streaming
+                    console.log('[Chat] Stream timeout, using non-streaming fallback');
+                }
+            }, 5000);
+
+            try {
+                for await (const { text, source, done } of unifiedAI.generateTextStream(prompt)) {
+                    if (done) break;
+                    fullText += text;
+                    streamSucceeded = true;
+                    setStreamingText(fullText);
+
+                    setMessages(prev => prev.map(m =>
+                        m.id === assistantId
+                            ? { ...m, content: fullText }
+                            : m
+                    ));
+                }
+                clearTimeout(streamTimeout);
+            } catch (streamError) {
+                console.warn('[Chat] Streaming failed, using fallback:', streamError);
+                clearTimeout(streamTimeout);
+            }
+
+            // If stream didn't produce any text, try non-streaming
+            if (!fullText) {
+                console.log('[Chat] Using non-streaming fallback');
+                const response = await unifiedAI.generateText(prompt);
+                fullText = response.success ? response.text : 'AI временно недоступен. Попробуйте позже.';
             }
 
             // Finalize message
@@ -183,7 +255,6 @@ export default function ChatModeScreen() {
                         ? { ...m, content: fullText, isStreaming: false }
                         : m
                 );
-                // Save session after bot responds
                 saveSession(updated, selectedTopic || 'general', customTopic || undefined);
                 return updated;
             });
@@ -209,22 +280,7 @@ export default function ChatModeScreen() {
         scrollViewRef.current?.scrollToEnd({ animated: true });
     }, [messages, streamingText]);
 
-    // Loading state
-    if (!isModelReady) {
-        return (
-            <View style={styles.loadingContainer}>
-                {downloadProgress ? (
-                    <ModelDownloadIndicator
-                        visible={true}
-                        progress={downloadProgress.progress}
-                        text={downloadProgress.text}
-                    />
-                ) : (
-                    <LoadingIndicator text="Загрузка AI модели..." />
-                )}
-            </View>
-        );
-    }
+    // unifiedAI is always ready - no model loading needed
 
     // Custom topic modal
     if (showCustomInput) {
@@ -491,10 +547,6 @@ const styles = StyleSheet.create({
     assistantText: {
         color: colors.text.primary,
     },
-    streamingCursor: {
-        color: colors.primary[300],
-        fontSize: 18,
-    },
     // Input
     inputContainer: {
         flexDirection: 'row',
@@ -517,6 +569,7 @@ const styles = StyleSheet.create({
         borderRadius: borderRadius.lg,
         width: 48,
         height: '100%',
+        maxHeight: 100,
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -545,5 +598,10 @@ const styles = StyleSheet.create({
     correctionsText: {
         ...typography.bodySmall,
         color: colors.text.primary,
+    },
+    streamingCursor: {
+        color: '#FFFFFF',
+        fontSize: 18,
+        fontWeight: '400',
     },
 });

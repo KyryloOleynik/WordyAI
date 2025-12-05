@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
 import { getAllWords, getSettings, addXP, DictionaryWord, UserSettings, addWord, XP_REWARDS } from '@/services/storageService';
+import { unifiedAI } from '@/services/unifiedAIManager';
 
 interface MatchCard {
     id: string;
@@ -48,20 +49,41 @@ export default function MatchingModeScreen() {
         const pairCount = DIFFICULTY_LEVELS[currentRound]?.pairs || 6;
         const shuffled = words.sort(() => Math.random() - 0.5).slice(0, pairCount);
 
-        if (shuffled.length < 3) {
-            // Not enough words - add some defaults
-            const defaultWords: DictionaryWord[] = [
-                { id: 'd1', text: 'hello', definition: 'a greeting', translation: 'привет', cefrLevel: 'A1', status: 'new', timesShown: 0, timesCorrect: 0, lastReviewedAt: null, nextReviewAt: Date.now(), source: 'manual', createdAt: Date.now() },
-                { id: 'd2', text: 'world', definition: 'the earth and all people', translation: 'мир', cefrLevel: 'A1', status: 'new', timesShown: 0, timesCorrect: 0, lastReviewedAt: null, nextReviewAt: Date.now(), source: 'manual', createdAt: Date.now() },
-                { id: 'd3', text: 'book', definition: 'pages with text', translation: 'книга', cefrLevel: 'A1', status: 'new', timesShown: 0, timesCorrect: 0, lastReviewedAt: null, nextReviewAt: Date.now(), source: 'manual', createdAt: Date.now() },
-                { id: 'd4', text: 'cat', definition: 'a small animal', translation: 'кот', cefrLevel: 'A1', status: 'new', timesShown: 0, timesCorrect: 0, lastReviewedAt: null, nextReviewAt: Date.now(), source: 'manual', createdAt: Date.now() },
-                { id: 'd5', text: 'dog', definition: 'a loyal pet', translation: 'собака', cefrLevel: 'A1', status: 'new', timesShown: 0, timesCorrect: 0, lastReviewedAt: null, nextReviewAt: Date.now(), source: 'manual', createdAt: Date.now() },
-                { id: 'd6', text: 'house', definition: 'a building', translation: 'дом', cefrLevel: 'A1', status: 'new', timesShown: 0, timesCorrect: 0, lastReviewedAt: null, nextReviewAt: Date.now(), source: 'manual', createdAt: Date.now() },
-                { id: 'd7', text: 'water', definition: 'colorless liquid', translation: 'вода', cefrLevel: 'A1', status: 'new', timesShown: 0, timesCorrect: 0, lastReviewedAt: null, nextReviewAt: Date.now(), source: 'manual', createdAt: Date.now() },
-                { id: 'd8', text: 'food', definition: 'what we eat', translation: 'еда', cefrLevel: 'A1', status: 'new', timesShown: 0, timesCorrect: 0, lastReviewedAt: null, nextReviewAt: Date.now(), source: 'manual', createdAt: Date.now() },
-            ];
+        if (shuffled.length < pairCount) {
+            // Not enough words - generate with AI
             const needed = pairCount - shuffled.length;
-            shuffled.push(...defaultWords.slice(0, needed));
+            const level = settings.cefrLevel || 'B1';
+
+            try {
+                const prompt = `Generate ${needed} English words appropriate for CEFR level ${level} learner.
+Each word should have its Russian translation.
+Output JSON array only: [{"word": "...", "translation": "..."}]`;
+
+                const response = await unifiedAI.generateText(prompt, { jsonMode: true });
+                if (response.success) {
+                    const cleaned = response.text.replace(/```json/gi, '').replace(/```/g, '').trim();
+                    const aiWords = JSON.parse(cleaned);
+                    for (let i = 0; i < Math.min(aiWords.length, needed); i++) {
+                        const w = aiWords[i];
+                        shuffled.push({
+                            id: `ai_${Date.now()}_${i}`,
+                            text: w.word,
+                            definition: w.word,
+                            translation: w.translation,
+                            cefrLevel: level,
+                            status: 'new',
+                            timesShown: 0,
+                            timesCorrect: 0,
+                            lastReviewedAt: null,
+                            nextReviewAt: Date.now(),
+                            source: 'lesson',
+                            createdAt: Date.now(),
+                        } as DictionaryWord);
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to generate AI words:', e);
+            }
         }
 
         // Create card pairs
@@ -352,7 +374,9 @@ const styles = StyleSheet.create({
         backgroundColor: colors.surface,
         borderRadius: borderRadius.lg,
         padding: spacing.md,
-        minHeight: 60,
+        flex: 1,  // Equal heights in row
+        maxHeight: 70,  // Consistent max height
+        minHeight: 55,  // Consistent min height
         justifyContent: 'center',
         alignItems: 'center',
         // Volumetric 3D effect
@@ -417,6 +441,7 @@ const styles = StyleSheet.create({
         marginBottom: spacing.lg,
     },
     resultsTitle: {
+        textAlign: 'center',
         ...typography.h1,
         color: colors.text.primary,
         marginBottom: spacing.md,

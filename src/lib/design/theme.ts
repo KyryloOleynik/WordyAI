@@ -1,18 +1,19 @@
 // src/lib/design/theme.ts
-// Duolingo-inspired vibrant theme
+// Volumetric Duolingo-inspired theme with 3D depth
 
 export const colors = {
     // Background colors
-    background: '#131F24',     // Dark background
-    surface: '#1C2B33',        // Card surface
+    background: '#0F1A1F',     // Deeper dark
+    surface: '#1A2930',        // Card surface
     surfaceElevated: '#243B45', // Elevated cards
+    surfacePressed: '#152025', // Pressed state
 
     // Text
     text: {
         primary: '#FFFFFF',
         secondary: '#A3B8C2',
         tertiary: '#6B8290',
-        inverse: '#131F24',
+        inverse: '#0F1A1F',
     },
 
     // Primary brand (Duolingo green)
@@ -27,6 +28,8 @@ export const colors = {
         700: '#2E7D00',
         800: '#256600',
         900: '#1A4D00',
+        glow: 'rgba(88, 204, 2, 0.4)',
+        shadow: '#2E5500',
     },
 
     // Secondary (Golden/XP color)
@@ -35,15 +38,21 @@ export const colors = {
         400: '#FFC800',
         500: '#FFB700',
         600: '#FFA500',
+        glow: 'rgba(255, 200, 0, 0.4)',
     },
 
     // Accents
     accent: {
-        blue: '#1CB0F6',     // Blue for info/progress
-        green: '#58CC02',    // Green for correct
-        red: '#FF4B4B',      // Red for incorrect
-        amber: '#FFC800',    // Gold for XP/rewards
-        purple: '#CE82FF',   // Purple for streaks
+        blue: '#1CB0F6',
+        blueGlow: 'rgba(28, 176, 246, 0.4)',
+        green: '#58CC02',
+        greenGlow: 'rgba(88, 204, 2, 0.4)',
+        red: '#FF4B4B',
+        redGlow: 'rgba(255, 75, 75, 0.4)',
+        amber: '#FFC800',
+        amberGlow: 'rgba(255, 200, 0, 0.4)',
+        purple: '#CE82FF',
+        purpleGlow: 'rgba(206, 130, 255, 0.4)',
     },
 
     // Status colors
@@ -68,6 +77,15 @@ export const colors = {
         C1: '#CE82FF',
         C2: '#A855F7',
     },
+
+    // Volumetric gradients
+    gradients: {
+        greenButton: ['#6EE025', '#58CC02', '#43A000'],
+        blueButton: ['#4DC4F9', '#1CB0F6', '#0E8FD0'],
+        goldButton: ['#FFE066', '#FFC800', '#E6B000'],
+        redButton: ['#FF7373', '#FF4B4B', '#E63E3E'],
+        surface: ['#243B45', '#1A2930', '#152025'],
+    },
 };
 
 export const spacing = {
@@ -78,22 +96,24 @@ export const spacing = {
     xl: 20,
     xxl: 24,
     xxxl: 32,
+    xxxxl: 48,
 };
 
 export const borderRadius = {
-    sm: 8,
-    md: 12,
-    lg: 16,
-    xl: 20,
-    xxl: 24,
+    sm: 10,
+    md: 14,
+    lg: 18,
+    xl: 22,
+    xxl: 28,
     full: 9999,
 };
 
 export const typography = {
     h1: {
         fontSize: 32,
-        fontWeight: '700' as const,
+        fontWeight: '800' as const,
         lineHeight: 40,
+        letterSpacing: -0.5,
     },
     h2: {
         fontSize: 24,
@@ -107,7 +127,7 @@ export const typography = {
     },
     body: {
         fontSize: 16,
-        fontWeight: '400' as const,
+        fontWeight: '500' as const,
         lineHeight: 24,
     },
     bodyBold: {
@@ -117,50 +137,115 @@ export const typography = {
     },
     bodySmall: {
         fontSize: 14,
-        fontWeight: '400' as const,
+        fontWeight: '500' as const,
         lineHeight: 20,
     },
     caption: {
         fontSize: 12,
-        fontWeight: '500' as const,
+        fontWeight: '600' as const,
         lineHeight: 16,
     },
     button: {
-        fontSize: 16,
-        fontWeight: '700' as const,
+        fontSize: 17,
+        fontWeight: '800' as const,
         lineHeight: 24,
-        textTransform: 'uppercase' as const,
-        letterSpacing: 1,
+        letterSpacing: 0.5,
     },
 };
 
+// Volumetric shadows for 3D effect
 export const shadows = {
     sm: {
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.2,
-        shadowRadius: 3,
-        elevation: 2,
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+        elevation: 3,
     },
     md: {
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.25,
-        shadowRadius: 6,
-        elevation: 4,
+        shadowOffset: { width: 0, height: 5 },
+        shadowOpacity: 0.35,
+        shadowRadius: 8,
+        elevation: 6,
     },
     lg: {
         shadowColor: '#000',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.4,
+        shadowRadius: 12,
+        elevation: 10,
+    },
+    inner: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.5,
+        shadowRadius: 3,
+        elevation: 0,
+    },
+    glow: (color: string) => ({
+        shadowColor: color,
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.6,
+        shadowRadius: 16,
+        elevation: 0,
+    }),
+    button: {
+        shadowColor: '#000',
         shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.3,
-        shadowRadius: 10,
+        shadowOpacity: 0.4,
+        shadowRadius: 0,
         elevation: 8,
     },
-    glow: {
-        shadowColor: '#58CC02',
+};
+
+// Animation timing
+export const animation = {
+    fast: 150,
+    normal: 250,
+    slow: 400,
+    spring: {
+        damping: 12,
+        stiffness: 180,
+    },
+};
+
+// Volumetric component styles
+export const volumetric = {
+    // Button with 3D press effect
+    buttonBase: {
+        borderRadius: borderRadius.lg,
+        paddingVertical: spacing.lg,
+        paddingHorizontal: spacing.xxl,
+        borderBottomWidth: 4,
+    },
+    buttonPressed: {
+        transform: [{ translateY: 4 }],
+        borderBottomWidth: 0,
+    },
+    // Card with depth
+    cardBase: {
+        backgroundColor: colors.surface,
+        borderRadius: borderRadius.xl,
+        borderWidth: 1,
+        borderColor: colors.border.light,
+        borderBottomWidth: 4,
+        borderBottomColor: 'rgba(0,0,0,0.3)',
+    },
+    // Input with inner glow
+    inputBase: {
+        backgroundColor: colors.surfaceElevated,
+        borderRadius: borderRadius.lg,
+        borderWidth: 2,
+        borderColor: colors.border.medium,
+        paddingVertical: spacing.lg,
+        paddingHorizontal: spacing.xl,
+    },
+    inputFocused: {
+        borderColor: colors.primary[300],
+        shadowColor: colors.primary.glow,
         shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.5,
-        shadowRadius: 12,
-        elevation: 0,
+        shadowOpacity: 1,
+        shadowRadius: 8,
     },
 };

@@ -1,11 +1,9 @@
 import { StyleSheet, Text, View, Pressable, ScrollView, TextInput, ActivityIndicator, Modal } from 'react-native';
 import { useState, useEffect } from 'react';
 import { useNavigation } from '@react-navigation/native';
-import Card from '@/components/ui/Card';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
-import { useLocalLLM } from '@/hooks/useLocalLLM';
-import { ModelDownloadIndicator } from '@/components/ui/ModelDownloadIndicator';
-import { addWord, getSettings, addXP, DictionaryWord, XP_REWARDS } from '@/services/storageService';
+import { unifiedAI } from '@/services/unifiedAIManager';
+import { addWord, getSettings, addXP, XP_REWARDS } from '@/services/storageService';
 import { translateWord } from '@/services/translationService';
 
 const STORY_TOPICS = [
@@ -39,7 +37,6 @@ interface WordLookupData {
 
 export default function StoryModeScreen() {
     const navigation = useNavigation();
-    const { isReady, downloadProgress, generateStoryWithQuestions, checkStoryAnswer, lookupWord } = useLocalLLM();
 
     const [step, setStep] = useState<'topic' | 'level' | 'reading' | 'questions' | 'results'>('topic');
     const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
@@ -71,7 +68,7 @@ export default function StoryModeScreen() {
         setIsLoading(true);
 
         try {
-            const result = await generateStoryWithQuestions(selectedTopic!, level);
+            const result = await unifiedAI.generateStoryWithQuestions(selectedTopic!, level);
             if (result) {
                 setStory(result);
                 setStep('reading');
@@ -135,6 +132,14 @@ export default function StoryModeScreen() {
                 lastReviewedAt: null,
                 nextReviewAt: Date.now(),
                 source: 'lookup',
+                translationCorrect: 0,
+                translationWrong: 0,
+                matchingCorrect: 0,
+                matchingWrong: 0,
+                lessonCorrect: 0,
+                lessonWrong: 0,
+                reviewCount: 0,
+                masteryScore: 0,
             });
             setAddedWords(prev => new Set([...prev, wordLookup.word]));
         }
@@ -153,7 +158,7 @@ export default function StoryModeScreen() {
 
         try {
             const currentQuestion = story.questions[currentQuestionIndex];
-            const result = await checkStoryAnswer(
+            const result = await unifiedAI.checkStoryAnswer(
                 currentQuestion.question,
                 userAnswer,
                 currentQuestion.correctAnswer,
@@ -192,23 +197,7 @@ export default function StoryModeScreen() {
         setAddedWords(new Set());
     };
 
-    if (!isReady) {
-        return (
-            <View style={styles.loadingContainer}>
-                <ModelDownloadIndicator
-                    visible={!!downloadProgress}
-                    progress={downloadProgress?.progress || 0}
-                    text={downloadProgress?.text || 'Инициализация...'}
-                />
-                {!downloadProgress && (
-                    <>
-                        <ActivityIndicator size="large" color={colors.primary[300]} />
-                        <Text style={styles.loadingText}>Загрузка AI модели...</Text>
-                    </>
-                )}
-            </View>
-        );
-    }
+    // With unifiedAI, we don't need to wait for local model - it auto-selects backend
 
     if (isLoading && step !== 'questions') {
         return (

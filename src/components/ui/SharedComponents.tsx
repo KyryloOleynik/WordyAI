@@ -765,3 +765,177 @@ const volumetricStyles = StyleSheet.create({
     },
 });
 
+// ============= EXERCISE HEADER (XP + Progress) =============
+
+interface ExerciseHeaderProps {
+    progress: number; // 0-1
+    xpEarned: number;
+    onBack?: () => void;
+}
+
+export function ExerciseHeader({ progress, xpEarned, onBack }: ExerciseHeaderProps) {
+    return (
+        <View style={exerciseHeaderStyles.container}>
+            <View style={exerciseHeaderStyles.progressContainer}>
+                <View style={exerciseHeaderStyles.progressTrack}>
+                    <View style={[exerciseHeaderStyles.progressBar, { width: `${progress * 100}%` }]} />
+                </View>
+            </View>
+            <View style={exerciseHeaderStyles.xpBadge}>
+                <Text style={exerciseHeaderStyles.xpText}>+{xpEarned} XP</Text>
+            </View>
+        </View>
+    );
+}
+
+const exerciseHeaderStyles = StyleSheet.create({
+    container: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: spacing.lg,
+        paddingVertical: spacing.md,
+        gap: spacing.md,
+        backgroundColor: colors.surface,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border.light,
+    },
+    backButton: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: colors.surfaceElevated,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    backIcon: {
+        fontSize: 20,
+        color: colors.text.primary,
+    },
+    progressContainer: {
+        flex: 1,
+    },
+    progressTrack: {
+        height: 10,
+        backgroundColor: colors.surfaceElevated,
+        borderRadius: 5,
+        overflow: 'hidden',
+    },
+    progressBar: {
+        height: '100%',
+        backgroundColor: colors.primary[300],
+        borderRadius: 5,
+    },
+    xpBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: `${colors.accent.amber}20`,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.xs,
+        borderRadius: borderRadius.full,
+        gap: spacing.xs,
+    },
+    xpText: {
+        ...typography.caption,
+        color: colors.accent.amber,
+        fontWeight: '700',
+    },
+});
+
+// ============= WRONG ANSWER OVERLAY (Red Flash) =============
+
+interface WrongAnswerFlashProps {
+    visible: boolean;
+}
+
+export function WrongAnswerFlash({ visible }: WrongAnswerFlashProps) {
+    const opacityAnim = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        if (visible) {
+            opacityAnim.setValue(0.4);
+            Animated.timing(opacityAnim, {
+                toValue: 0,
+                duration: 400,
+                useNativeDriver: true,
+            }).start();
+        }
+    }, [visible]);
+
+    if (!visible) return null;
+
+    return (
+        <Animated.View
+            style={[
+                wrongFlashStyles.overlay,
+                { opacity: opacityAnim },
+            ]}
+            pointerEvents="none"
+        />
+    );
+}
+
+const wrongFlashStyles = StyleSheet.create({
+    overlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: colors.accent.red,
+        zIndex: 999,
+    },
+});
+
+// ============= SHARED MATCHING CARD STYLES =============
+
+export const matchingCardStyles = StyleSheet.create({
+    container: {
+        flexDirection: 'row',
+        gap: spacing.md,
+    },
+    column: {
+        flex: 1,
+        gap: spacing.sm,
+    },
+    label: {
+        ...typography.caption,
+        color: colors.text.tertiary,
+        textAlign: 'center',
+        marginBottom: spacing.xs,
+    },
+    card: {
+        backgroundColor: colors.surface,
+        borderRadius: borderRadius.lg,
+        padding: spacing.md,
+        borderWidth: 2,
+        borderColor: colors.border.light,
+        borderBottomWidth: 4,
+        borderBottomColor: colors.border.medium,
+        minHeight: 55,
+        maxHeight: 70,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    cardActive: {
+        borderColor: colors.primary[300],
+        backgroundColor: `${colors.primary[300]}15`,
+        transform: [{ scale: 1.02 }],
+    },
+    cardHighlight: {
+        borderColor: colors.accent.amber,
+        borderStyle: 'dashed',
+    },
+    cardMatched: {
+        borderColor: colors.accent.green,
+        backgroundColor: `${colors.accent.green}15`,
+        opacity: 0.7,
+    },
+    cardSelected: {
+        borderColor: colors.primary[300],
+        backgroundColor: `${colors.primary[300]}10`,
+    },
+    cardText: {
+        ...typography.body,
+        color: colors.text.primary,
+        textAlign: 'center',
+    },
+    cardTextMatched: {
+        color: colors.accent.green,
+    },
+});

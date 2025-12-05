@@ -96,6 +96,14 @@ export default function TappableText({ text, style, onWordAdded }: TappableTextP
             lastReviewedAt: null,
             nextReviewAt: Date.now(),
             source: 'lookup',
+            translationCorrect: 0,
+            translationWrong: 0,
+            matchingCorrect: 0,
+            matchingWrong: 0,
+            lessonCorrect: 0,
+            lessonWrong: 0,
+            reviewCount: 0,
+            masteryScore: 0,
         });
 
         setAddedWords(prev => new Set([...prev, selectedWord.word]));

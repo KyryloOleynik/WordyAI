@@ -2,11 +2,12 @@ import { StyleSheet, Text, View, Pressable, TextInput, ScrollView, ActivityIndic
 import { useState, useEffect } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
-import { useLocalLLM } from '@/hooks/useLocalLLM';
-import { ModelDownloadIndicator } from '@/components/ui/ModelDownloadIndicator';
-import { VolumetricButton, SuccessAnimation } from '@/components/ui/SharedComponents';
+import { VolumetricButton } from '@/components/ui/SharedComponents';
 import { addXP, XP_REWARDS } from '@/services/storageService';
-import { generateRussianSentence, evaluateTranslation } from '@/services/aiService';
+import { unifiedAI } from '@/services/unifiedAIManager';
+import { getWordsForPractice, updateWordMetrics, DictionaryWord } from '@/services/database';
+import { analyzeGrammarErrors, GrammarError } from '@/services/grammarDetectionService';
+import TappableText from '@/components/ui/TappableText';
 
 const LEVELS = [
     { id: 'A1-A2', label: 'Начальный', color: colors.cefr.A1 },
@@ -14,20 +15,20 @@ const LEVELS = [
     { id: 'C1-C2', label: 'Продвинутый', color: colors.cefr.C1 },
 ] as const;
 
-// Fallback sentences (used if AI generation fails)
+// Fallback sentences (used if AI generation fails or no vocabulary)
 const FALLBACK_SENTENCES = {
     'A1-A2': [
-        'Я люблю читать книги.',
-        'Моя семья очень большая.',
-        'Сегодня хорошая погода.',
+        { sentence: 'Я люблю читать книги.', expected: 'I love reading books.' },
+        { sentence: 'Моя семья очень большая.', expected: 'My family is very big.' },
+        { sentence: 'Сегодня хорошая погода.', expected: 'The weather is nice today.' },
     ],
     'B1-B2': [
-        'Я бы хотел поехать в отпуск.',
-        'Если бы у меня было время, я бы прочитал эту книгу.',
+        { sentence: 'Я бы хотел поехать в отпуск.', expected: 'I would like to go on vacation.' },
+        { sentence: 'Если бы у меня было время, я бы прочитал эту книгу.', expected: 'If I had time, I would read this book.' },
     ],
     'C1-C2': [
-        'Будь я на твоём месте, я бы поступил иначе.',
-        'Как бы это ни казалось странным, он был прав.',
+        { sentence: 'Будь я на твоём месте, я бы поступил иначе.', expected: 'If I were you, I would have acted differently.' },
+        { sentence: 'Как бы это ни казалось странным, он был прав.', expected: 'Strange as it may seem, he was right.' },
     ],
 };
 
@@ -37,15 +38,16 @@ interface TranslationResult {
     feedback: string;
     suggestedTranslation: string;
     errors: string[];
+    grammarErrors?: GrammarError[];
 }
 
 export default function TranslationModeScreen() {
     const navigation = useNavigation();
-    const { isReady, downloadProgress, checkEnglishTranslation } = useLocalLLM();
 
     const [step, setStep] = useState<'level' | 'exercise' | 'result'>('level');
     const [selectedLevel, setSelectedLevel] = useState<'A1-A2' | 'B1-B2' | 'C1-C2' | null>(null);
     const [russianSentence, setRussianSentence] = useState('');
+    const [expectedTranslation, setExpectedTranslation] = useState('');
     const [sentenceHint, setSentenceHint] = useState<string | null>(null);
     const [userTranslation, setUserTranslation] = useState('');
     const [result, setResult] = useState<TranslationResult | null>(null);
@@ -53,6 +55,38 @@ export default function TranslationModeScreen() {
     const [isGenerating, setIsGenerating] = useState(false);
     const [exerciseCount, setExerciseCount] = useState(0);
     const [totalXP, setTotalXP] = useState(0);
+    const [aiStatus, setAiStatus] = useState<string>('Проверка AI...');
+    const [vocabWords, setVocabWords] = useState<DictionaryWord[]>([]);
+    const [currentWordId, setCurrentWordId] = useState<string | null>(null);
+    const [grammarErrors, setGrammarErrors] = useState<GrammarError[]>([]);
+
+    // Load vocabulary words on mount
+    useEffect(() => {
+        loadVocabulary();
+        checkAIStatus();
+    }, []);
+
+    const loadVocabulary = async () => {
+        try {
+            const words = await getWordsForPractice(20, true);
+            setVocabWords(words);
+        } catch (error) {
+            console.log('Could not load vocabulary, using fallback sentences');
+        }
+    };
+
+    const checkAIStatus = async () => {
+        const status = await unifiedAI.getStatus();
+        if (status.activeBackend === 'google') {
+            setAiStatus('Google AI');
+        } else if (status.activeBackend === 'perplexity') {
+            setAiStatus('Perplexity AI');
+        } else if (status.activeBackend === 'local') {
+            setAiStatus('Локальный AI');
+        } else {
+            setAiStatus('AI недоступен');
+        }
+    };
 
     const selectLevel = (level: 'A1-A2' | 'B1-B2' | 'C1-C2') => {
         setSelectedLevel(level);
@@ -63,25 +97,44 @@ export default function TranslationModeScreen() {
         setResult(null);
         setUserTranslation('');
         setSentenceHint(null);
+        setCurrentWordId(null);
         setIsGenerating(true);
         setStep('exercise');
 
         try {
-            // Try to generate AI sentence
-            const generated = await generateRussianSentence(level);
+            // Get vocabulary words for this exercise
+            const targetWords = vocabWords.slice(0, 3).map(w => w.text);
+
+            // Try to generate AI sentence with vocabulary
+            const generated = await unifiedAI.generateRussianSentence(level, targetWords);
 
             if (generated) {
                 setRussianSentence(generated.sentence);
+                setExpectedTranslation(generated.expectedTranslation);
                 setSentenceHint(generated.hint || null);
+
+                // Track word if it was used
+                if (targetWords.length > 0) {
+                    const usedWord = vocabWords.find(w =>
+                        generated.expectedTranslation.toLowerCase().includes(w.text.toLowerCase())
+                    );
+                    if (usedWord) {
+                        setCurrentWordId(usedWord.id);
+                    }
+                }
             } else {
                 // Fallback to static sentences
                 const sentences = FALLBACK_SENTENCES[level];
-                setRussianSentence(sentences[Math.floor(Math.random() * sentences.length)]);
+                const fallback = sentences[Math.floor(Math.random() * sentences.length)];
+                setRussianSentence(fallback.sentence);
+                setExpectedTranslation(fallback.expected);
             }
         } catch (error) {
             console.log('AI generation failed, using fallback');
             const sentences = FALLBACK_SENTENCES[level];
-            setRussianSentence(sentences[Math.floor(Math.random() * sentences.length)]);
+            const fallback = sentences[Math.floor(Math.random() * sentences.length)];
+            setRussianSentence(fallback.sentence);
+            setExpectedTranslation(fallback.expected);
         } finally {
             setIsGenerating(false);
         }
@@ -92,28 +145,49 @@ export default function TranslationModeScreen() {
         setIsLoading(true);
 
         try {
-            // Use LLM to get suggested translation and then calculate accuracy
-            const checkResult = await checkEnglishTranslation(russianSentence, userTranslation);
-
-            // Use formula-based accuracy calculation
-            const accuracyResult = await evaluateTranslation(
+            // Use unified AI manager for evaluation
+            const evaluationResult = await unifiedAI.evaluateTranslation(
                 russianSentence,
                 userTranslation,
-                checkResult.suggestedTranslation
+                expectedTranslation
             );
 
-            // Combine results
+            const isCorrect = evaluationResult.accuracy >= 70;
+
+            // Analyze grammar errors if incorrect
+            let detectedGrammarErrors: GrammarError[] = [];
+            if (!isCorrect) {
+                try {
+                    detectedGrammarErrors = await analyzeGrammarErrors(
+                        russianSentence,
+                        userTranslation,
+                        expectedTranslation
+                    );
+                    setGrammarErrors(detectedGrammarErrors);
+                } catch (e) {
+                    console.log('Grammar analysis failed:', e);
+                }
+            } else {
+                setGrammarErrors([]);
+            }
+
             const finalResult: TranslationResult = {
-                isCorrect: accuracyResult.accuracy >= 70,
-                accuracy: accuracyResult.accuracy,
-                feedback: accuracyResult.feedback || checkResult.feedback,
-                suggestedTranslation: checkResult.suggestedTranslation,
-                errors: accuracyResult.errors.length > 0 ? accuracyResult.errors : checkResult.errors,
+                isCorrect,
+                accuracy: evaluationResult.accuracy,
+                feedback: evaluationResult.feedback,
+                suggestedTranslation: expectedTranslation,
+                errors: evaluationResult.errors,
+                grammarErrors: detectedGrammarErrors,
             };
 
             setResult(finalResult);
             setStep('result');
             setExerciseCount(prev => prev + 1);
+
+            // Update word metrics if a vocabulary word was used
+            if (currentWordId) {
+                await updateWordMetrics(currentWordId, 'translation', isCorrect);
+            }
 
             // Award XP based on accuracy
             if (finalResult.accuracy >= 70) {
@@ -123,12 +197,30 @@ export default function TranslationModeScreen() {
             }
         } catch (error) {
             console.error('Translation check error:', error);
+            // Simple fallback evaluation
+            const userWords = userTranslation.toLowerCase().split(/\s+/);
+            const expectedWords = expectedTranslation.toLowerCase().split(/\s+/);
+            const matched = userWords.filter(w => expectedWords.includes(w));
+            const accuracy = Math.round((matched.length / expectedWords.length) * 100);
+
+            setResult({
+                isCorrect: accuracy >= 50,
+                accuracy,
+                feedback: accuracy >= 70 ? 'Хорошо!' : 'Попробуй сравнить с правильным переводом',
+                suggestedTranslation: expectedTranslation,
+                errors: []
+            });
+            setStep('result');
+            setExerciseCount(prev => prev + 1);
         } finally {
             setIsLoading(false);
         }
     };
 
     const nextExercise = () => {
+        // Rotate vocabulary words
+        setVocabWords(prev => [...prev.slice(1), ...prev.slice(0, 1)]);
+
         if (selectedLevel) {
             loadExercise(selectedLevel);
         }
@@ -138,27 +230,10 @@ export default function TranslationModeScreen() {
         setStep('level');
         setSelectedLevel(null);
         setRussianSentence('');
+        setExpectedTranslation('');
         setResult(null);
         setExerciseCount(0);
     };
-
-    if (!isReady) {
-        return (
-            <View style={styles.loadingContainer}>
-                <ModelDownloadIndicator
-                    visible={!!downloadProgress}
-                    progress={downloadProgress?.progress || 0}
-                    text={downloadProgress?.text || 'Инициализация...'}
-                />
-                {!downloadProgress && (
-                    <>
-                        <ActivityIndicator size="large" color={colors.primary[300]} />
-                        <Text style={styles.loadingText}>Загрузка AI модели...</Text>
-                    </>
-                )}
-            </View>
-        );
-    }
 
     // Level Selection
     if (step === 'level') {
@@ -169,6 +244,9 @@ export default function TranslationModeScreen() {
                     <Text style={styles.subtitle}>
                         Переведите предложение с русского на английский. AI проверит грамматику.
                     </Text>
+                    <View style={styles.aiStatusBadge}>
+                        <Text style={styles.aiStatusText}>🤖 {aiStatus}</Text>
+                    </View>
                 </View>
                 <View style={styles.levelContainer}>
                     {LEVELS.map(level => (
@@ -182,6 +260,13 @@ export default function TranslationModeScreen() {
                         </Pressable>
                     ))}
                 </View>
+                {vocabWords.length > 0 && (
+                    <View style={styles.vocabInfo}>
+                        <Text style={styles.vocabInfoText}>
+                            📚 {vocabWords.length} слов из словаря будут использованы
+                        </Text>
+                    </View>
+                )}
             </View>
         );
     }
@@ -200,38 +285,49 @@ export default function TranslationModeScreen() {
                 </View>
 
                 <ScrollView contentContainerStyle={styles.exerciseContent}>
-                    <View style={styles.sentenceCard}>
-                        <Text style={styles.translateLabel}>Переведите на английский:</Text>
-                        <Text style={styles.originalSentence}>{russianSentence}</Text>
-                    </View>
+                    {isGenerating ? (
+                        <View style={styles.generatingContainer}>
+                            <ActivityIndicator size="large" color={colors.primary[300]} />
+                            <Text style={styles.generatingText}>Генерация предложения...</Text>
+                        </View>
+                    ) : (
+                        <>
+                            <View style={styles.sentenceCard}>
+                                <Text style={styles.translateLabel}>Переведите на английский:</Text>
+                                <Text style={styles.originalSentence}>{russianSentence}</Text>
+                                {sentenceHint && (
+                                    <Text style={styles.hintText}>💡 {sentenceHint}</Text>
+                                )}
+                            </View>
 
-                    <View style={styles.inputContainer}>
-                        <TextInput
-                            style={styles.translationInput}
-                            value={userTranslation}
-                            onChangeText={setUserTranslation}
-                            placeholder="Type your English translation..."
-                            placeholderTextColor={colors.text.tertiary}
-                            multiline
-                        />
-                    </View>
+                            <View style={styles.inputContainer}>
+                                <TextInput
+                                    style={styles.translationInput}
+                                    value={userTranslation}
+                                    onChangeText={setUserTranslation}
+                                    placeholder="Type your English translation..."
+                                    placeholderTextColor={colors.text.tertiary}
+                                    multiline
+                                />
+                            </View>
 
-                    <View style={styles.buttonRow}>
-                        <Pressable style={styles.skipButton} onPress={nextExercise}>
-                            <Text style={styles.skipButtonText}>Пропустить</Text>
-                        </Pressable>
-                        <Pressable
-                            style={[styles.primaryButton, !userTranslation.trim() && styles.disabledButton]}
-                            onPress={submitTranslation}
-                            disabled={!userTranslation.trim() || isLoading}
-                        >
-                            {isLoading ? (
-                                <ActivityIndicator color={colors.text.inverse} />
-                            ) : (
-                                <Text style={styles.primaryButtonText}>Проверить</Text>
-                            )}
-                        </Pressable>
-                    </View>
+                            <View style={styles.buttonRow}>
+                                <VolumetricButton
+                                    title="Пропустить"
+                                    onPress={nextExercise}
+                                />
+                                <View style={{ flex: 1 }}>
+                                    <VolumetricButton
+                                        title="Проверить"
+                                        variant="success"
+                                        onPress={submitTranslation}
+                                        disabled={!userTranslation.trim() || isLoading}
+                                        loading={isLoading}
+                                    />
+                                </View>
+                            </View>
+                        </>
+                    )}
                 </ScrollView>
             </View>
         );
@@ -272,7 +368,7 @@ export default function TranslationModeScreen() {
 
                         <View style={[styles.comparisonSection, styles.suggestedSection]}>
                             <Text style={styles.comparisonLabel}>Правильный перевод:</Text>
-                            <Text style={styles.suggestedText}>{result.suggestedTranslation}</Text>
+                            <TappableText text={result.suggestedTranslation} style={styles.suggestedText} />
                         </View>
 
                         {/* Feedback */}
@@ -290,6 +386,29 @@ export default function TranslationModeScreen() {
                                         <Text style={styles.errorText}>• {error}</Text>
                                     </View>
                                 ))}
+                            </View>
+                        )}
+
+                        {/* Grammar Errors - Auto-detected and saved */}
+                        {grammarErrors && grammarErrors.length > 0 && (
+                            <View style={styles.grammarSection}>
+                                <Text style={styles.grammarLabel}>📖 Грамматика для повторения:</Text>
+                                {grammarErrors.map((gErr, index) => (
+                                    <View key={index} style={styles.grammarItem}>
+                                        <View style={styles.grammarHeader}>
+                                            <Text style={styles.grammarPattern}>{gErr.patternRu}</Text>
+                                            <Text style={styles.grammarPatternEn}>({gErr.pattern})</Text>
+                                        </View>
+                                        <Text style={styles.grammarDesc}>{gErr.description}</Text>
+                                        <View style={styles.grammarExample}>
+                                            <Text style={styles.grammarMistake}>❌ {gErr.userMistake}</Text>
+                                            <Text style={styles.grammarCorrect}>✅ {gErr.example}</Text>
+                                        </View>
+                                    </View>
+                                ))}
+                                <Text style={styles.grammarNote}>
+                                    💡 Добавлено в словарь грамматики для практики
+                                </Text>
                             </View>
                         )}
                     </View>
@@ -319,18 +438,6 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: colors.background,
     },
-    loadingContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: colors.background,
-        padding: spacing.xl,
-    },
-    loadingText: {
-        marginTop: spacing.md,
-        color: colors.text.secondary,
-        ...typography.body,
-    },
     header: {
         padding: spacing.lg,
         backgroundColor: colors.surface,
@@ -348,6 +455,18 @@ const styles = StyleSheet.create({
     subtitle: {
         ...typography.body,
         color: colors.text.secondary,
+    },
+    aiStatusBadge: {
+        marginTop: spacing.md,
+        backgroundColor: `${colors.primary[300]}20`,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.xs,
+        borderRadius: borderRadius.full,
+        alignSelf: 'flex-start',
+    },
+    aiStatusText: {
+        ...typography.caption,
+        color: colors.primary[300],
     },
     levelBadge: {
         ...typography.bodyBold,
@@ -381,9 +500,29 @@ const styles = StyleSheet.create({
         ...typography.body,
         color: colors.text.secondary,
     },
+    vocabInfo: {
+        marginHorizontal: spacing.xl,
+        padding: spacing.md,
+        backgroundColor: `${colors.accent.green}20`,
+        borderRadius: borderRadius.md,
+    },
+    vocabInfoText: {
+        ...typography.bodySmall,
+        color: colors.accent.green,
+        textAlign: 'center',
+    },
     exerciseContent: {
         padding: spacing.lg,
         gap: spacing.lg,
+    },
+    generatingContainer: {
+        padding: spacing.xxxl,
+        alignItems: 'center',
+    },
+    generatingText: {
+        marginTop: spacing.md,
+        color: colors.text.secondary,
+        ...typography.body,
     },
     sentenceCard: {
         padding: spacing.xl,
@@ -399,6 +538,11 @@ const styles = StyleSheet.create({
         ...typography.h3,
         color: colors.text.primary,
         lineHeight: 32,
+    },
+    hintText: {
+        ...typography.bodySmall,
+        color: colors.accent.amber,
+        marginTop: spacing.md,
     },
     inputContainer: {
         gap: spacing.md,
@@ -523,5 +667,62 @@ const styles = StyleSheet.create({
     errorText: {
         ...typography.bodySmall,
         color: colors.text.primary,
+    },
+    // Grammar section styles
+    grammarSection: {
+        marginTop: spacing.lg,
+        padding: spacing.md,
+        backgroundColor: `${colors.accent.blue}10`,
+        borderRadius: borderRadius.md,
+        borderLeftWidth: 3,
+        borderLeftColor: colors.accent.blue,
+    },
+    grammarLabel: {
+        ...typography.bodySmall,
+        fontWeight: '700',
+        color: colors.accent.blue,
+        marginBottom: spacing.md,
+    },
+    grammarItem: {
+        backgroundColor: colors.surface,
+        borderRadius: borderRadius.md,
+        padding: spacing.md,
+        marginBottom: spacing.sm,
+    },
+    grammarHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
+        marginBottom: spacing.xs,
+    },
+    grammarPattern: {
+        ...typography.bodyBold,
+        color: colors.text.primary,
+    },
+    grammarPatternEn: {
+        ...typography.caption,
+        color: colors.text.tertiary,
+    },
+    grammarDesc: {
+        ...typography.bodySmall,
+        color: colors.text.secondary,
+        marginBottom: spacing.sm,
+    },
+    grammarExample: {
+        gap: spacing.xs,
+    },
+    grammarMistake: {
+        ...typography.bodySmall,
+        color: colors.accent.red,
+    },
+    grammarCorrect: {
+        ...typography.bodySmall,
+        color: colors.accent.green,
+    },
+    grammarNote: {
+        ...typography.caption,
+        color: colors.text.tertiary,
+        textAlign: 'center',
+        marginTop: spacing.sm,
     },
 });

@@ -12,13 +12,17 @@ import {
     DictionaryWord,
     UserSettings
 } from '@/services/storageService';
+import { getGrammarConcepts, GrammarConcept } from '@/services/database';
 
 type FilterType = 'all' | 'new' | 'learning' | 'known';
+type MainTab = 'words' | 'grammar';
 
 export default function MyDictionaryScreen() {
     const { isReady, lookupWord } = useLocalLLM();
 
+    const [mainTab, setMainTab] = useState<MainTab>('words');
     const [words, setWords] = useState<DictionaryWord[]>([]);
+    const [grammarConcepts, setGrammarConcepts] = useState<GrammarConcept[]>([]);
     const [settings, setSettings] = useState<UserSettings | null>(null);
     const [filter, setFilter] = useState<FilterType>('all');
     const [searchQuery, setSearchQuery] = useState('');
@@ -30,9 +34,10 @@ export default function MyDictionaryScreen() {
     const [isSpeaking, setIsSpeaking] = useState(false);
 
     const loadData = async () => {
-        const [w, s] = await Promise.all([getAllWords(), getSettings()]);
+        const [w, s, g] = await Promise.all([getAllWords(), getSettings(), getGrammarConcepts()]);
         setWords(w);
         setSettings(s);
+        setGrammarConcepts(g);
     };
 
     useFocusEffect(
@@ -67,6 +72,14 @@ export default function MyDictionaryScreen() {
                     lastReviewedAt: null,
                     nextReviewAt: Date.now(),
                     source: 'manual',
+                    translationCorrect: 0,
+                    translationWrong: 0,
+                    matchingCorrect: 0,
+                    matchingWrong: 0,
+                    lessonCorrect: 0,
+                    lessonWrong: 0,
+                    reviewCount: 0,
+                    masteryScore: 0,
                 });
                 await loadData();
                 setNewWord('');
@@ -155,58 +168,126 @@ export default function MyDictionaryScreen() {
             <View style={styles.wordFooter}>
                 <View style={[styles.statusDot, { backgroundColor: getStatusColor(item.status) }]} />
                 <Text style={styles.statusText}>{getStatusLabel(item.status)}</Text>
+                {/* Mastery Progress */}
+                <View style={styles.masteryContainer}>
+                    <View style={styles.masteryTrack}>
+                        <View style={[styles.masteryBar, { width: `${(item.masteryScore || 0) * 100}%` }]} />
+                    </View>
+                    <Text style={styles.masteryText}>{Math.round((item.masteryScore || 0) * 100)}%</Text>
+                </View>
             </View>
         </Pressable>
     );
 
     return (
         <View style={styles.container}>
-            {/* Search */}
-            <View style={styles.searchContainer}>
-                <TextInput
-                    style={styles.searchInput}
-                    placeholder="Поиск слов..."
-                    placeholderTextColor={colors.text.tertiary}
-                    value={searchQuery}
-                    onChangeText={setSearchQuery}
-                />
-            </View>
-
-            {/* Filter Tabs */}
-            <View style={styles.filterContainer}>
-                {(['all', 'new', 'learning', 'known'] as FilterType[]).map(f => (
-                    <Pressable
-                        key={f}
-                        style={[styles.filterTab, filter === f && styles.filterTabActive]}
-                        onPress={() => setFilter(f)}
-                    >
-                        <Text style={[styles.filterText, filter === f && styles.filterTextActive]}>
-                            {f === 'all' ? 'Все' :
-                                f === 'new' ? 'Новые' :
-                                    f === 'learning' ? 'Учу' : 'Выучил'}
-                        </Text>
-                    </Pressable>
-                ))}
-            </View>
-
-            {/* Words List */}
-            {filteredWords.length === 0 ? (
-                <View style={styles.emptyContainer}>
-                    <Text style={styles.emptyIcon}>📚</Text>
-                    <Text style={styles.emptyText}>
-                        {words.length === 0
-                            ? 'Словарь пуст. Добавьте слова!'
-                            : 'Нет слов по фильтру'}
+            {/* Main Tab Switcher - Words / Grammar */}
+            <View style={styles.mainTabContainer}>
+                <Pressable
+                    style={[styles.mainTab, mainTab === 'words' && styles.mainTabActive]}
+                    onPress={() => setMainTab('words')}
+                >
+                    <Text style={[styles.mainTabText, mainTab === 'words' && styles.mainTabTextActive]}>
+                        📚 Слова ({words.length})
                     </Text>
-                </View>
+                </Pressable>
+                <Pressable
+                    style={[styles.mainTab, mainTab === 'grammar' && styles.mainTabActive]}
+                    onPress={() => setMainTab('grammar')}
+                >
+                    <Text style={[styles.mainTabText, mainTab === 'grammar' && styles.mainTabTextActive]}>
+                        📖 Грамматика ({grammarConcepts.length})
+                    </Text>
+                </Pressable>
+            </View>
+
+            {mainTab === 'words' ? (
+                <>
+                    {/* Search */}
+                    <View style={styles.searchContainer}>
+                        <TextInput
+                            style={styles.searchInput}
+                            placeholder="Поиск слов..."
+                            placeholderTextColor={colors.text.tertiary}
+                            value={searchQuery}
+                            onChangeText={setSearchQuery}
+                        />
+                    </View>
+
+                    {/* Filter Tabs */}
+                    <View style={styles.filterContainer}>
+                        {(['all', 'new', 'learning', 'known'] as FilterType[]).map(f => (
+                            <Pressable
+                                key={f}
+                                style={[styles.filterTab, filter === f && styles.filterTabActive]}
+                                onPress={() => setFilter(f)}
+                            >
+                                <Text style={[styles.filterText, filter === f && styles.filterTextActive]}>
+                                    {f === 'all' ? 'Все' :
+                                        f === 'new' ? 'Новые' :
+                                            f === 'learning' ? 'Учу' : 'Выучил'}
+                                </Text>
+                            </Pressable>
+                        ))}
+                    </View>
+
+                    {/* Words List */}
+                    {filteredWords.length === 0 ? (
+                        <View style={styles.emptyContainer}>
+                            <Text style={styles.emptyIcon}>📚</Text>
+                            <Text style={styles.emptyText}>
+                                {words.length === 0
+                                    ? 'Словарь пуст. Добавьте слова!'
+                                    : 'Нет слов по фильтру'}
+                            </Text>
+                        </View>
+                    ) : (
+                        <FlatList
+                            data={filteredWords}
+                            keyExtractor={item => item.id}
+                            renderItem={renderWordItem}
+                            contentContainerStyle={styles.listContent}
+                            showsVerticalScrollIndicator={false}
+                        />
+                    )}
+                </>
             ) : (
-                <FlatList
-                    data={filteredWords}
-                    keyExtractor={item => item.id}
-                    renderItem={renderWordItem}
-                    contentContainerStyle={styles.listContent}
-                    showsVerticalScrollIndicator={false}
-                />
+                /* Grammar Concepts List */
+                grammarConcepts.length === 0 ? (
+                    <View style={styles.emptyContainer}>
+                        <Text style={styles.emptyIcon}>📖</Text>
+                        <Text style={styles.emptyTitle}>Нет грамматических тем</Text>
+                        <Text style={styles.emptyText}>
+                            Грамматика добавляется автоматически при изучении уроков
+                        </Text>
+                    </View>
+                ) : (
+                    <FlatList
+                        data={grammarConcepts}
+                        keyExtractor={item => item.id}
+                        contentContainerStyle={styles.listContent}
+                        showsVerticalScrollIndicator={false}
+                        renderItem={({ item }) => (
+                            <View style={styles.grammarCard}>
+                                <View style={styles.grammarHeader}>
+                                    <Text style={styles.grammarName}>{item.nameRu}</Text>
+                                    {item.errorCount > 0 && (
+                                        <View style={styles.errorBadge}>
+                                            <Text style={styles.errorBadgeText}>{item.errorCount} ошибок</Text>
+                                        </View>
+                                    )}
+                                </View>
+                                <Text style={styles.grammarEnglish}>{item.name}</Text>
+                                <Text style={styles.grammarDesc} numberOfLines={2}>{item.description}</Text>
+                                <View style={styles.grammarStats}>
+                                    <Text style={styles.grammarStatText}>
+                                        Практика: {item.practiceCount} | Усвоение: {Math.round(item.masteryScore * 100)}%
+                                    </Text>
+                                </View>
+                            </View>
+                        )}
+                    />
+                )
             )}
 
             {/* Add Button */}
@@ -279,25 +360,57 @@ export default function MyDictionaryScreen() {
                                     <Text style={styles.detailDefinition}>{selectedWord.definition || 'No definition'}</Text>
                                 </View>
 
-                                {/* Stats */}
+                                {/* Stats - Combined metrics from all exercises */}
                                 <View style={styles.statsRow}>
                                     <View style={styles.statItem}>
-                                        <Text style={styles.statValue}>{selectedWord.timesShown}</Text>
-                                        <Text style={styles.statLabel}>Показано</Text>
+                                        <Text style={styles.statValue}>
+                                            {selectedWord.reviewCount ||
+                                                (selectedWord.translationCorrect + selectedWord.translationWrong +
+                                                    selectedWord.matchingCorrect + selectedWord.matchingWrong +
+                                                    selectedWord.lessonCorrect + selectedWord.lessonWrong) ||
+                                                selectedWord.timesShown || 0}
+                                        </Text>
+                                        <Text style={styles.statLabel}>Повторений</Text>
                                     </View>
                                     <View style={styles.statItem}>
-                                        <Text style={styles.statValue}>{selectedWord.timesCorrect}</Text>
+                                        <Text style={styles.statValue}>
+                                            {(selectedWord.translationCorrect || 0) +
+                                                (selectedWord.matchingCorrect || 0) +
+                                                (selectedWord.lessonCorrect || 0) ||
+                                                selectedWord.timesCorrect || 0}
+                                        </Text>
                                         <Text style={styles.statLabel}>Правильно</Text>
                                     </View>
                                     <View style={styles.statItem}>
                                         <Text style={styles.statValue}>
-                                            {selectedWord.timesShown > 0
-                                                ? Math.round((selectedWord.timesCorrect / selectedWord.timesShown) * 100)
-                                                : 0}%
+                                            {(() => {
+                                                const correct = (selectedWord.translationCorrect || 0) +
+                                                    (selectedWord.matchingCorrect || 0) +
+                                                    (selectedWord.lessonCorrect || 0);
+                                                const wrong = (selectedWord.translationWrong || 0) +
+                                                    (selectedWord.matchingWrong || 0) +
+                                                    (selectedWord.lessonWrong || 0);
+                                                const total = correct + wrong;
+                                                if (total === 0 && selectedWord.timesShown > 0) {
+                                                    return Math.round((selectedWord.timesCorrect / selectedWord.timesShown) * 100);
+                                                }
+                                                return total > 0 ? Math.round((correct / total) * 100) : 0;
+                                            })()}%
                                         </Text>
                                         <Text style={styles.statLabel}>Точность</Text>
                                     </View>
                                 </View>
+
+                                {/* Mastery Progress */}
+                                {selectedWord.masteryScore !== undefined && (
+                                    <View style={styles.masteryRow}>
+                                        <Text style={styles.masteryLabel}>Усвоение:</Text>
+                                        <View style={styles.masteryBar}>
+                                            <View style={[styles.masteryFill, { width: `${Math.round((selectedWord.masteryScore || 0) * 100)}%` }]} />
+                                        </View>
+                                        <Text style={styles.masteryPercent}>{Math.round((selectedWord.masteryScore || 0) * 100)}%</Text>
+                                    </View>
+                                )}
 
                                 {/* Status */}
                                 <View style={styles.statusRow}>
@@ -629,5 +742,131 @@ const styles = StyleSheet.create({
     },
     deleteButtonText: {
         fontSize: 20,
+    },
+    // Main tabs
+    mainTabContainer: {
+        flexDirection: 'row',
+        backgroundColor: colors.surface,
+        padding: spacing.sm,
+        gap: spacing.sm,
+    },
+    mainTab: {
+        flex: 1,
+        paddingVertical: spacing.md,
+        alignItems: 'center',
+        borderRadius: borderRadius.lg,
+        backgroundColor: colors.surfaceElevated,
+    },
+    mainTabActive: {
+        backgroundColor: colors.primary[300],
+    },
+    mainTabText: {
+        ...typography.bodyBold,
+        color: colors.text.secondary,
+    },
+    mainTabTextActive: {
+        color: colors.text.inverse,
+    },
+    emptyTitle: {
+        ...typography.h3,
+        color: colors.text.primary,
+        marginBottom: spacing.sm,
+    },
+    // Grammar
+    grammarCard: {
+        backgroundColor: colors.surface,
+        borderRadius: borderRadius.lg,
+        padding: spacing.lg,
+        marginBottom: spacing.sm,
+    },
+    grammarHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: spacing.xs,
+    },
+    grammarName: {
+        ...typography.h3,
+        color: colors.text.primary,
+        flex: 1,
+    },
+    errorBadge: {
+        backgroundColor: `${colors.accent.red}20`,
+        paddingHorizontal: spacing.sm,
+        paddingVertical: spacing.xs,
+        borderRadius: borderRadius.sm,
+    },
+    errorBadgeText: {
+        ...typography.caption,
+        color: colors.accent.red,
+    },
+    grammarEnglish: {
+        ...typography.bodySmall,
+        color: colors.accent.blue,
+        marginBottom: spacing.sm,
+    },
+    grammarDesc: {
+        ...typography.body,
+        color: colors.text.secondary,
+        marginBottom: spacing.sm,
+    },
+    grammarStats: {
+        paddingTop: spacing.sm,
+        borderTopWidth: 1,
+        borderTopColor: colors.border.light,
+    },
+    grammarStatText: {
+        ...typography.caption,
+        color: colors.text.tertiary,
+    },
+    // Mastery progress
+    masteryRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: spacing.lg,
+        gap: spacing.sm,
+    },
+    masteryLabel: {
+        ...typography.caption,
+        color: colors.text.tertiary,
+    },
+    masteryBar: {
+        flex: 1,
+        height: 8,
+        backgroundColor: colors.border.light,
+        borderRadius: borderRadius.sm,
+        overflow: 'hidden',
+    },
+    masteryFill: {
+        height: '100%',
+        backgroundColor: colors.accent.green,
+        borderRadius: borderRadius.sm,
+    },
+    masteryPercent: {
+        ...typography.caption,
+        color: colors.accent.green,
+        fontWeight: '700',
+        minWidth: 35,
+        textAlign: 'right',
+    },
+    // Word card mastery display
+    masteryContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginLeft: 'auto',
+        gap: spacing.xs,
+    },
+    masteryTrack: {
+        width: 40,
+        height: 4,
+        backgroundColor: colors.border.light,
+        borderRadius: 2,
+        overflow: 'hidden',
+    },
+    masteryText: {
+        ...typography.caption,
+        color: colors.accent.green,
+        fontWeight: '600',
+        fontSize: 10,
     },
 });

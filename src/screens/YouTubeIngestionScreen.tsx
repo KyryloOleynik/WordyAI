@@ -2,7 +2,7 @@ import { StyleSheet, Text, View, TextInput, ActivityIndicator, ScrollView, Alert
 import { useState } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import Card from '@/components/ui/Card';
-import Button from '@/components/ui/Button';
+import { VolumetricButton } from '@/components/ui/SharedComponents';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
 import { fetchYouTubeSubtitles } from '@/features/ingestion/youtubeService';
 import { extractNewWords, CEFRLevel } from '@/lib/nlp/filter';
@@ -92,6 +92,14 @@ export default function YouTubeIngestionScreen() {
                     lastReviewedAt: null,
                     nextReviewAt: Date.now(),
                     source: 'youtube',
+                    translationCorrect: 0,
+                    translationWrong: 0,
+                    matchingCorrect: 0,
+                    matchingWrong: 0,
+                    lessonCorrect: 0,
+                    lessonWrong: 0,
+                    reviewCount: 0,
+                    masteryScore: 0,
                 });
             }
 
@@ -145,11 +153,12 @@ export default function YouTubeIngestionScreen() {
                     autoCorrect={false}
                     editable={!isProcessing && !isSaving}
                 />
-                <Button
+                <VolumetricButton
                     title="Извлечь слова"
                     onPress={handleExtract}
                     disabled={!url || Platform.OS === 'web'}
                     loading={isProcessing}
+                    variant="primary"
                 />
             </Card>
 
@@ -176,17 +185,14 @@ export default function YouTubeIngestionScreen() {
                     </View>
 
                     <View style={styles.actionButtons}>
-                        <Button
+                        <VolumetricButton
                             title="Очистить всё"
                             onPress={() => setExtractedWords([])}
-                            variant="outline"
-                            size="medium"
                         />
-                        <Button
+                        <VolumetricButton
                             title={`Сохранить ${extractedWords.length} слов`}
                             onPress={saveWords}
-                            variant="primary"
-                            size="medium"
+                            variant="success"
                             loading={isSaving}
                             disabled={extractedWords.length === 0}
                         />
@@ -371,6 +377,8 @@ const styles = StyleSheet.create({
     },
     actionButtons: {
         flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'center',
         gap: spacing.md,
     },
     instructionsContainer: {
