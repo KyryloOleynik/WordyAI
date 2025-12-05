@@ -14,6 +14,7 @@ import TranslationModeScreen from '../screens/TranslationModeScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import MatchingModeScreen from '../screens/MatchingModeScreen';
 import LessonsScreen from '../screens/LessonsScreen';
+import GrammarTestScreen from '../screens/GrammarTestScreen';
 import { colors, typography } from '@/lib/design/theme';
 import { getSettings } from '@/services/storageService';
 
@@ -132,6 +133,11 @@ export default function AppNavigator() {
                     name="Lessons"
                     component={LessonsScreen}
                     options={{ title: 'Уроки' }}
+                />
+                <Stack.Screen
+                    name="GrammarTest"
+                    component={GrammarTestScreen}
+                    options={{ title: 'Тест по грамматике' }}
                 />
             </Stack.Navigator>
         </NavigationContainer>

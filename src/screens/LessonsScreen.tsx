@@ -61,6 +61,7 @@ export default function LessonsScreen() {
     const [shuffledTranslations, setShuffledTranslations] = useState<string[]>([]);  // Prevent re-shuffle on render
     const [selectedWord, setSelectedWord] = useState<string | null>(null);  // For matching pairs
     const [wrongFlashVisible, setWrongFlashVisible] = useState(false);  // Red flash on wrong answer
+    const [error, setError] = useState<string | null>(null);  // Error message for AI failures
 
     const { shakeAnim, shake } = useShake();
     const { pulseAnim, pulse } = usePulse();
@@ -419,6 +420,22 @@ Output JSON array only: [{"word": "...", "translation": "..."}]`;
         );
     }
 
+    // ============ ERROR ============
+    if (error) {
+        return (
+            <SafeAreaView style={styles.container}>
+                <View style={styles.loadingContainer}>
+                    <Text style={{ fontSize: 48, marginBottom: spacing.lg }}>⚠️</Text>
+                    <Text style={[styles.loadingText, { color: colors.accent.red }]}>{error}</Text>
+                    <View style={{ marginTop: spacing.xl, gap: spacing.md, width: '100%', paddingHorizontal: spacing.xl }}>
+                        <VButton title="Попробовать снова" onPress={() => { setError(null); generateLesson(); }} fullWidth />
+                        <VButton title="Назад" variant="ghost" onPress={() => navigation.goBack()} fullWidth />
+                    </View>
+                </View>
+            </SafeAreaView>
+        );
+    }
+
     // ============ LESSON COMPLETE ============
     if (lessonComplete) {
         const percentage = Math.round((progress.correct / progress.total) * 100);
@@ -696,7 +713,7 @@ const styles = StyleSheet.create({
     clearButton: { alignSelf: 'center' },
     clearButtonText: { ...typography.bodySmall, color: colors.accent.red },
 
-    optionsContainer: { gap: spacing.md },
+    optionsContainer: { marginTop: spacing.lg, gap: spacing.md },
     optionButton: { backgroundColor: colors.surface, borderRadius: borderRadius.lg, padding: spacing.lg, borderWidth: 2, borderColor: colors.border.light, borderBottomWidth: 4, borderBottomColor: colors.border.medium },
     optionSelected: { borderColor: colors.primary[300], backgroundColor: `${colors.primary[300]}10` },
     optionCorrect: { borderColor: colors.accent.green, backgroundColor: `${colors.accent.green}15` },
@@ -736,7 +753,7 @@ const styles = StyleSheet.create({
     matchingItemText: { ...typography.body, color: colors.text.primary, textAlign: 'center' },
     matchingItemTextMatched: { color: colors.accent.green },
 
-    resultCard: { flexDirection: 'row', alignItems: 'center', padding: spacing.lg, borderRadius: borderRadius.lg, gap: spacing.md },
+    resultCard: { marginTop: spacing.lg, flexDirection: 'row', alignItems: 'center', padding: spacing.lg, borderRadius: borderRadius.lg, gap: spacing.md },
     resultCorrect: { backgroundColor: `${colors.accent.green}20` },
     resultWrong: { backgroundColor: `${colors.accent.red}20` },
     resultEmoji: { fontSize: 28 },

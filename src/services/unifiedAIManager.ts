@@ -238,6 +238,70 @@ Replace the target word with ___ in the sentence.`;
         }
     }
 
+    /**
+     * Extract English words from an image using Gemini Vision API
+     * @param base64Image Base64 encoded image data
+     * @returns Array of {word, translation} pairs or null on failure
+     */
+    async extractWordsFromImage(base64Image: string): Promise<{ word: string; translation: string }[] | null> {
+        const googleKey = await getWorkingKey('google');
+        if (!googleKey) {
+            console.error('[UnifiedAI] Vision requires Google API key');
+            return null;
+        }
+
+        try {
+            const response = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${googleKey.key}`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [
+                                {
+                                    text: `Look at this image and extract ALL English words or vocabulary you can see.
+For each word, provide its Russian translation.
+Only include actual English words, not numbers or symbols.
+Output JSON array only: [{"word": "example", "translation": "пример"}, ...]` },
+                                {
+                                    inline_data: {
+                                        mime_type: 'image/jpeg',
+                                        data: base64Image.replace(/^data:image\/\w+;base64,/, '')
+                                    }
+                                }
+                            ]
+                        }],
+                        generationConfig: {
+                            temperature: 0.2,
+                            maxOutputTokens: 2048,
+                        }
+                    })
+                }
+            );
+
+            if (!response.ok) {
+                const error = await response.text();
+                console.error('[UnifiedAI] Vision API error:', error);
+                await markKeyFailed(googleKey.id);
+                return null;
+            }
+
+            const data = await response.json();
+            const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            const cleaned = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+
+            const result = JSON.parse(cleaned);
+            if (Array.isArray(result)) {
+                return result.filter((item: any) => item.word && typeof item.word === 'string');
+            }
+            return null;
+        } catch (error: any) {
+            console.error('[UnifiedAI] Vision extraction failed:', error.message);
+            return null;
+        }
+    }
+
     async generateRussianSentence(
         level: 'A1-A2' | 'B1-B2' | 'C1-C2',
         vocabWords?: string[]

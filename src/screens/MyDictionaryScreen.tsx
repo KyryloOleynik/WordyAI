@@ -1,12 +1,15 @@
-import { StyleSheet, Text, View, ScrollView, Pressable, TextInput, Modal, ActivityIndicator, FlatList } from 'react-native';
+import { StyleSheet, Text, View, ScrollView, Pressable, TextInput, Modal, ActivityIndicator, FlatList, Alert } from 'react-native';
 import { useState, useCallback } from 'react';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
 import { useLocalLLM } from '@/hooks/useLocalLLM';
 import * as Speech from 'expo-speech';
+import * as ImagePicker from 'expo-image-picker';
+import { unifiedAI } from '@/services/unifiedAIManager';
 import {
     getAllWords,
     addWord,
+    updateWord,
     deleteWord,
     getSettings,
     DictionaryWord,
@@ -18,6 +21,7 @@ type FilterType = 'all' | 'new' | 'learning' | 'known';
 type MainTab = 'words' | 'grammar';
 
 export default function MyDictionaryScreen() {
+    const navigation = useNavigation<any>();
     const { isReady, lookupWord } = useLocalLLM();
 
     const [mainTab, setMainTab] = useState<MainTab>('words');
@@ -54,18 +58,30 @@ export default function MyDictionaryScreen() {
         return true;
     });
 
+    // Fast word adding - adds immediately, AI enriches in background
     const handleAddWord = async () => {
-        if (!newWord.trim() || !isReady) return;
+        if (!newWord.trim()) return;
         setIsAddingWord(true);
 
         try {
-            const lookupResult = await lookupWord(newWord.trim());
-            if (lookupResult) {
+            // Parse multiple words (comma, newline, or semicolon separated)
+            const wordList = newWord
+                .split(/[,;\n]+/)
+                .map(w => w.trim().toLowerCase())
+                .filter(w => w.length > 0 && w.length < 50);
+
+            if (wordList.length === 0) {
+                setIsAddingWord(false);
+                return;
+            }
+
+            // Add all words immediately with basic data
+            for (const wordText of wordList) {
                 await addWord({
-                    text: newWord.trim().toLowerCase(),
-                    definition: lookupResult.definition || '',
-                    translation: lookupResult.translation || '',
-                    cefrLevel: lookupResult.cefrLevel || 'B1',
+                    text: wordText,
+                    definition: '',
+                    translation: '',
+                    cefrLevel: 'B1',
                     status: 'new',
                     timesShown: 0,
                     timesCorrect: 0,
@@ -81,9 +97,29 @@ export default function MyDictionaryScreen() {
                     reviewCount: 0,
                     masteryScore: 0,
                 });
-                await loadData();
-                setNewWord('');
-                setShowAddModal(false);
+            }
+
+            await loadData();
+            setNewWord('');
+            setShowAddModal(false);
+
+            // Enrich words with AI in background (non-blocking)
+            if (isReady) {
+                for (const wordText of wordList) {
+                    lookupWord(wordText).then(async (result) => {
+                        if (result) {
+                            const existingWord = words.find(w => w.text === wordText);
+                            if (existingWord && !existingWord.translation) {
+                                await updateWord(existingWord.id, {
+                                    definition: result.definition || '',
+                                    translation: result.translation || '',
+                                    cefrLevel: result.cefrLevel || 'B1',
+                                });
+                                loadData(); // Refresh to show updated data
+                            }
+                        }
+                    }).catch(() => { }); // Ignore AI errors
+                }
             }
         } catch (error) {
             console.error('Error adding word:', error);
@@ -124,6 +160,11 @@ export default function MyDictionaryScreen() {
                 onError: () => setIsSpeaking(false),
             });
         }
+    };
+
+    // Start grammar test - navigate to lessons with specific grammar concept
+    const startGrammarTest = (concept: GrammarConcept) => {
+        navigation.navigate('GrammarTest', { concept });
     };
 
     const getStatusColor = (status: string) => {
@@ -284,6 +325,12 @@ export default function MyDictionaryScreen() {
                                         Практика: {item.practiceCount} | Усвоение: {Math.round(item.masteryScore * 100)}%
                                     </Text>
                                 </View>
+                                <Pressable
+                                    style={styles.grammarTestButton}
+                                    onPress={() => startGrammarTest(item)}
+                                >
+                                    <Text style={styles.grammarTestButtonText}>📝 Пройти тест</Text>
+                                </Pressable>
                             </View>
                         )}
                     />
@@ -299,17 +346,19 @@ export default function MyDictionaryScreen() {
             <Modal visible={showAddModal} transparent animationType="fade">
                 <Pressable style={styles.modalOverlay} onPress={() => setShowAddModal(false)}>
                     <Pressable style={styles.modalContent} onPress={e => e.stopPropagation()}>
-                        <Text style={styles.modalTitle}>Добавить слово</Text>
+                        <Text style={styles.modalTitle}>Добавить слова</Text>
                         <TextInput
-                            style={styles.modalInput}
-                            placeholder="Введите английское слово"
+                            style={[styles.modalInput, { minHeight: 80, textAlignVertical: 'top' }]}
+                            placeholder="apple, banana, orange&#10;или каждое с новой строки"
                             placeholderTextColor={colors.text.tertiary}
                             value={newWord}
                             onChangeText={setNewWord}
                             autoCapitalize="none"
+                            multiline
+                            numberOfLines={3}
                         />
                         <Text style={styles.modalHint}>
-                            AI автоматически найдёт перевод и определение
+                            Введите слова через запятую или каждое с новой строки.{'\n'}AI автоматически найдёт переводы.
                         </Text>
                         <Pressable
                             style={[styles.modalButton, (!newWord.trim() || isAddingWord) && styles.disabledButton]}
@@ -319,7 +368,9 @@ export default function MyDictionaryScreen() {
                             {isAddingWord ? (
                                 <ActivityIndicator color={colors.text.inverse} />
                             ) : (
-                                <Text style={styles.modalButtonText}>Добавить</Text>
+                                <Text style={styles.modalButtonText}>
+                                    Добавить{newWord.split(/[,;\n]+/).filter(w => w.trim()).length > 1 ? ` (${newWord.split(/[,;\n]+/).filter(w => w.trim()).length})` : ''}
+                                </Text>
                             )}
                         </Pressable>
                     </Pressable>
@@ -449,7 +500,7 @@ const styles = StyleSheet.create({
         backgroundColor: colors.background,
     },
     searchContainer: {
-        padding: spacing.md,
+        padding: spacing.sm,
         backgroundColor: colors.surface,
     },
     searchInput: {
@@ -748,6 +799,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         backgroundColor: colors.surface,
         padding: spacing.sm,
+        paddingTop: spacing.xl,
         gap: spacing.sm,
     },
     mainTab: {
@@ -868,5 +920,19 @@ const styles = StyleSheet.create({
         color: colors.accent.green,
         fontWeight: '600',
         fontSize: 10,
+    },
+    // Grammar test button
+    grammarTestButton: {
+        marginTop: spacing.md,
+        backgroundColor: colors.primary[300],
+        paddingVertical: spacing.sm,
+        paddingHorizontal: spacing.md,
+        borderRadius: borderRadius.md,
+        alignItems: 'center',
+    },
+    grammarTestButtonText: {
+        ...typography.bodySmall,
+        color: colors.text.inverse,
+        fontWeight: '600',
     },
 });
