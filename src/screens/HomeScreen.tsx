@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
 import { getStats, getAllWords, getSettings, UserStats, UserSettings, getLevelTitle, calculateLevel } from '@/services/storageService';
+import { VCard } from '@/components/ui/DesignSystem';
 
 export default function HomeScreen() {
     const navigation = useNavigation<any>();
@@ -154,23 +155,29 @@ export default function HomeScreen() {
 
                 {/* Menu Grid */}
                 <View style={styles.menuGrid}>
+                    {/* Using Map to ensure unique keys and easier management */}
+                    {/* Note: VCard doesn't support width styling directly as efficiently as flex basis for grid.
+                        We will wrap VCard or style it directly.
+                        Let's update styles.menuCard to be compatible or wrap it.
+                     */}
                     {menuItems.map((item) => (
-                        <Pressable
-                            key={item.id}
-                            style={({ pressed }) => [
-                                styles.menuCard,
-                                item.highlight && styles.menuCardHighlight,
-                                pressed && styles.menuCardPressed,
-                            ]}
-                            onPress={() => navigation.navigate(item.screen)}
-                        >
-                            <View style={[styles.iconContainer, { backgroundColor: `${item.color}20` }]}>
-                                <Text style={styles.menuIcon}>{item.icon}</Text>
-                            </View>
-                            <Text style={styles.menuTitle}>{item.title}</Text>
-                            <Text style={styles.menuSubtitle}>{item.subtitle}</Text>
-                            {item.highlight && <View style={styles.highlightDot} />}
-                        </Pressable>
+                        <View key={item.id} style={styles.menuCardContainer}>
+                            <VCard
+                                style={[
+                                    styles.menuCard,
+                                    item.highlight && styles.menuCardHighlight
+                                ]}
+                                onPress={() => navigation.navigate(item.screen)}
+                                variant={item.highlight ? 'elevated' : 'default'}
+                            >
+                                <View style={[styles.iconContainer, { backgroundColor: `${item.color}20` }]}>
+                                    <Text style={styles.menuIcon}>{item.icon}</Text>
+                                </View>
+                                <Text style={styles.menuTitle}>{item.title}</Text>
+                                <Text style={styles.menuSubtitle}>{item.subtitle}</Text>
+                                {item.highlight && <View style={styles.highlightDot} />}
+                            </VCard>
+                        </View>
                     ))}
                 </View>
 
@@ -294,7 +301,7 @@ const styles = StyleSheet.create({
         backgroundColor: colors.surface,
         padding: spacing.lg,
         borderRadius: borderRadius.lg,
-        marginBottom: spacing.xl,
+        marginBottom: spacing.sm,
     },
     dailyHeader: {
         flexDirection: 'row',
@@ -328,27 +335,23 @@ const styles = StyleSheet.create({
         textAlign: 'center',
     },
     menuGrid: {
+        marginBottom: spacing.sm,
         flexDirection: 'row',
         flexWrap: 'wrap',
-        justifyContent: 'space-evenly',
-        gap: spacing.md,
-        marginBottom: spacing.lg,
+    },
+    menuCardContainer: {
+        width: '50%',
+        padding: spacing.sm,
     },
     menuCard: {
-        width: '48%',
-        backgroundColor: colors.surface,
-        borderRadius: borderRadius.xl,
-        padding: spacing.lg,
         minHeight: 140,
-        position: 'relative',
+        flex: 1, // Allow card to fill the container height (determined by row tallest)
+        width: '100%',
     },
     menuCardHighlight: {
-        borderWidth: 2,
+        borderRadius: 22,
         borderColor: colors.primary[300],
-    },
-    menuCardPressed: {
-        opacity: 0.8,
-        transform: [{ scale: 0.98 }],
+        borderWidth: 2,
     },
     iconContainer: {
         width: 48,

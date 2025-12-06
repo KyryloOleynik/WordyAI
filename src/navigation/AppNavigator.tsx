@@ -16,6 +16,7 @@ import MatchingModeScreen from '../screens/MatchingModeScreen';
 import LessonsScreen from '../screens/LessonsScreen';
 import GrammarTestScreen from '../screens/GrammarTestScreen';
 import { colors, typography } from '@/lib/design/theme';
+import { LoadingIndicator } from '@/components/ui/SharedComponents';
 import { getSettings } from '@/services/storageService';
 
 const Stack = createNativeStackNavigator();
@@ -55,7 +56,7 @@ export default function AppNavigator() {
     if (isLoading) {
         return (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background }}>
-                <ActivityIndicator size="large" color={colors.primary[300]} />
+                <LoadingIndicator text="Загрузка..." />
             </View>
         );
     }

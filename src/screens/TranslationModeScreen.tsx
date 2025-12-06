@@ -2,36 +2,15 @@ import { StyleSheet, Text, View, Pressable, TextInput, ScrollView, ActivityIndic
 import { useState, useEffect, useRef } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
-import { VolumetricButton, CompletionScreen, UnifiedFeedbackModal } from '@/components/ui/SharedComponents';
+import { VButton, StyledInput } from '@/components/ui/DesignSystem';
+import { CompletionScreen, UnifiedFeedbackModal, ScreenContainer, LoadingIndicator, getApiKeyErrorConfig } from '@/components/ui/SharedComponents';
 import { addXP, XP_REWARDS } from '@/services/storageService';
 import { unifiedAI, ApiKeyError } from '@/services/unifiedAIManager';
 import { getWordsForPractice, updateWordMetrics, DictionaryWord } from '@/services/database';
 import { analyzeGrammarErrors, GrammarError } from '@/services/grammarDetectionService';
 import { saveAIResult, cleanMarkupFromText } from '@/services/aiResponseParser';
 import TappableText from '@/components/ui/TappableText';
-
-const LEVELS = [
-    { id: 'A1-A2', label: 'Начальный', color: colors.cefr.A1 },
-    { id: 'B1-B2', label: 'Средний', color: colors.cefr.B1 },
-    { id: 'C1-C2', label: 'Продвинутый', color: colors.cefr.C1 },
-] as const;
-
-// Fallback sentences (used if AI generation fails or no vocabulary)
-const FALLBACK_SENTENCES = {
-    'A1-A2': [
-        { sentence: 'Я люблю читать книги.', expected: 'I love reading books.' },
-        { sentence: 'Моя семья очень большая.', expected: 'My family is very big.' },
-        { sentence: 'Сегодня хорошая погода.', expected: 'The weather is nice today.' },
-    ],
-    'B1-B2': [
-        { sentence: 'Я бы хотел поехать в отпуск.', expected: 'I would like to go on vacation.' },
-        { sentence: 'Если бы у меня было время, я бы прочитал эту книгу.', expected: 'If I had time, I would read this book.' },
-    ],
-    'C1-C2': [
-        { sentence: 'Будь я на твоём месте, я бы поступил иначе.', expected: 'If I were you, I would have acted differently.' },
-        { sentence: 'Как бы это ни казалось странным, он был прав.', expected: 'Strange as it may seem, he was right.' },
-    ],
-};
+import { LEVELS } from '@/constants/common';
 
 interface TranslationResult {
     isCorrect: boolean;
@@ -153,19 +132,19 @@ export default function TranslationModeScreen() {
                         setCurrentWordId(usedWord.id);
                     }
                 }
-            } else {
-                // Fallback to static sentences
-                const sentences = FALLBACK_SENTENCES[level];
-                const fallback = sentences[Math.floor(Math.random() * sentences.length)];
-                setRussianSentence(fallback.sentence);
-                setExpectedTranslation(fallback.expected);
             }
-        } catch (error) {
-            console.log('AI generation failed, using fallback');
-            const sentences = FALLBACK_SENTENCES[level];
-            const fallback = sentences[Math.floor(Math.random() * sentences.length)];
-            setRussianSentence(fallback.sentence);
-            setExpectedTranslation(fallback.expected);
+        } catch (error: any) {
+            console.warn('AI generation failed', error);
+            if (error.name === 'ApiKeyError') {
+                setFeedbackModal(getApiKeyErrorConfig(navigation, () => setFeedbackModal(prev => ({ ...prev, visible: false }))));
+            } else {
+                setFeedbackModal({
+                    visible: true,
+                    type: 'error',
+                    title: 'Ошибка',
+                    message: 'Не удалось сгенерировать предложение. Попробуйте снова.',
+                });
+            }
         } finally {
             setIsGenerating(false);
         }
@@ -240,19 +219,7 @@ export default function TranslationModeScreen() {
             console.error('Translation check error:', error);
 
             if (error.name === 'ApiKeyError') {
-                setFeedbackModal({
-                    visible: true,
-                    type: 'warning',
-                    title: 'Ошибка ключа API',
-                    message: 'Не удалось подключиться к AI. Проверьте настройки.',
-                    primaryAction: {
-                        label: 'Настройки',
-                        onPress: () => {
-                            setFeedbackModal(prev => ({ ...prev, visible: false }));
-                            navigation.navigate('Settings' as never);
-                        }
-                    }
-                });
+                setFeedbackModal(getApiKeyErrorConfig(navigation, () => setFeedbackModal(prev => ({ ...prev, visible: false }))));
                 // Do not fallback to local check if it's an API key error, 
                 // as the user needs to fix it to get proper feedback.
             } else {
@@ -311,7 +278,7 @@ export default function TranslationModeScreen() {
     // Level Selection
     if (step === 'level') {
         return (
-            <View style={styles.container}>
+            <ScreenContainer>
                 <View style={styles.header}>
                     <Text style={styles.title}>Перевод</Text>
                     <Text style={styles.subtitle}>
@@ -333,21 +300,23 @@ export default function TranslationModeScreen() {
                         </Pressable>
                     ))}
                 </View>
-                {vocabWords.length > 0 && (
-                    <View style={styles.vocabInfo}>
-                        <Text style={styles.vocabInfoText}>
-                            📚 {vocabWords.length} слов из словаря будут использованы
-                        </Text>
-                    </View>
-                )}
-            </View>
+                {
+                    vocabWords.length > 0 && (
+                        <View style={styles.vocabInfo}>
+                            <Text style={styles.vocabInfoText}>
+                                📚 {vocabWords.length} слов из словаря будут использованы
+                            </Text>
+                        </View>
+                    )
+                }
+            </ScreenContainer>
         );
     }
 
     // Exercise Phase
     if (step === 'exercise') {
         return (
-            <View style={styles.container}>
+            <ScreenContainer>
                 <View style={styles.header}>
                     <View style={styles.headerRow}>
                         <Text style={styles.levelBadge}>{selectedLevel}</Text>
@@ -359,10 +328,7 @@ export default function TranslationModeScreen() {
 
                 <ScrollView contentContainerStyle={styles.exerciseContent}>
                     {isGenerating ? (
-                        <View style={styles.generatingContainer}>
-                            <ActivityIndicator size="large" color={colors.primary[300]} />
-                            <Text style={styles.generatingText}>Генерация предложения...</Text>
-                        </View>
+                        <LoadingIndicator text="Генерация предложения..." />
                     ) : (
                         <>
                             <View style={styles.sentenceCard}>
@@ -374,23 +340,23 @@ export default function TranslationModeScreen() {
                             </View>
 
                             <View style={styles.inputContainer}>
-                                <TextInput
+                                <StyledInput
                                     style={styles.translationInput}
                                     value={userTranslation}
                                     onChangeText={setUserTranslation}
                                     placeholder="Type your English translation..."
-                                    placeholderTextColor={colors.text.tertiary}
                                     multiline
                                 />
                             </View>
 
+
                             <View style={styles.buttonRow}>
-                                <VolumetricButton
+                                <VButton
                                     title="Пропустить"
                                     onPress={nextExercise}
                                 />
                                 <View style={{ flex: 1 }}>
-                                    <VolumetricButton
+                                    <VButton
                                         title="Проверить"
                                         variant="success"
                                         onPress={submitTranslation}
@@ -404,16 +370,18 @@ export default function TranslationModeScreen() {
                 </ScrollView>
 
                 {/* Progress Bar matching MatchingMode */}
-                {!isGenerating && (
-                    <View style={styles.progressContainer}>
-                        <View style={styles.progressTrack}>
-                            <Animated.View style={[styles.progressBar, { width: progressWidth }]} />
+                {
+                    !isGenerating && (
+                        <View style={styles.progressContainer}>
+                            <View style={styles.progressTrack}>
+                                <Animated.View style={[styles.progressBar, { width: progressWidth }]} />
+                            </View>
+                            <Text style={styles.progressText}>
+                                {exerciseCount % 10}/10
+                            </Text>
                         </View>
-                        <Text style={styles.progressText}>
-                            {exerciseCount % 10}/10
-                        </Text>
-                    </View>
-                )}
+                    )
+                }
                 <UnifiedFeedbackModal
                     visible={feedbackModal.visible}
                     type={feedbackModal.type}
@@ -422,14 +390,14 @@ export default function TranslationModeScreen() {
                     primaryAction={feedbackModal.primaryAction}
                     onClose={() => setFeedbackModal(prev => ({ ...prev, visible: false }))}
                 />
-            </View>
+            </ScreenContainer>
         );
     }
 
     // Result Phase
     if (step === 'result' && result) {
         return (
-            <View style={styles.container}>
+            <ScreenContainer>
                 <ScrollView contentContainerStyle={styles.resultContent}>
                     <View style={styles.resultCard}>
                         {/* Score */}
@@ -511,7 +479,7 @@ export default function TranslationModeScreen() {
                             <Text style={styles.skipButtonText}>Изменить уровень</Text>
                         </Pressable>
                         <View style={{ flex: 1 }}>
-                            <VolumetricButton
+                            <VButton
                                 title="Следующее →"
                                 variant={result.accuracy >= 70 ? 'success' : 'primary'}
                                 onPress={nextExercise}
@@ -527,7 +495,7 @@ export default function TranslationModeScreen() {
                     primaryAction={feedbackModal.primaryAction}
                     onClose={() => setFeedbackModal(prev => ({ ...prev, visible: false }))}
                 />
-            </View>
+            </ScreenContainer>
         );
     }
 

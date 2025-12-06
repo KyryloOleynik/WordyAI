@@ -227,10 +227,13 @@ export const volumetric = {
     cardBase: {
         backgroundColor: colors.surface,
         borderRadius: borderRadius.xl,
-        borderWidth: 1,
-        borderColor: colors.border.light,
+        borderTopWidth: 1,
+        borderLeftWidth: 1,
+        borderRightWidth: 1,
         borderBottomWidth: 4,
-        borderBottomColor: 'rgba(0,0,0,0.3)',
+        borderTopColor: colors.border.light,
+        borderLeftColor: colors.border.light,
+        borderRightColor: colors.border.light,
     },
     // Input with inner glow
     inputBase: {

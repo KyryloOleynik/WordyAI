@@ -151,7 +151,8 @@ Output JSON array only: [{"word": "...", "translation": "..."}]`;
                             const fillPrompt = `Create a simple English sentence for level ${word.cefrLevel || level} using the word "${word.text}".
 The sentence must contain the word "${word.text}" replaced with _____.
 
-Output JSON only:
+Output with JSON structure only.
+Example:
 {
   "sentence": "The _____ was very interesting.",
   "missingWord": "${word.text}",

@@ -1,7 +1,7 @@
 // src/components/ui/DesignSystem.tsx
 // Unified Volumetric Design System Components
 
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import {
     View,
     Text,
@@ -12,14 +12,14 @@ import {
     ViewStyle,
     TextStyle,
     TextInputProps,
+    StyleProp,
+    Modal
 } from 'react-native';
 import { colors, spacing, borderRadius, typography, shadows, animation, volumetric } from '@/lib/design/theme';
 
-// ============ SOUND EFFECTS ============
-
+// Initialize sounds only if assets exist
 let soundsEnabled = false;
 
-// Initialize sounds only if assets exist
 export function initSounds() {
     soundsEnabled = true;
 }
@@ -102,6 +102,7 @@ interface VButtonProps {
     disabled?: boolean;
     icon?: string;
     fullWidth?: boolean;
+    loading?: boolean;
     style?: ViewStyle;
 }
 
@@ -111,6 +112,7 @@ export function VButton({
     variant = 'primary',
     size = 'medium',
     disabled = false,
+    loading = false,
     icon,
     fullWidth = false,
     style,
@@ -121,7 +123,7 @@ export function VButton({
         Animated.timing(pressAnim, {
             toValue: 1,
             duration: 80,
-            useNativeDriver: true,
+            useNativeDriver: false, // Explicitly false for layout properties
         }).start();
     };
 
@@ -129,7 +131,7 @@ export function VButton({
         Animated.timing(pressAnim, {
             toValue: 0,
             duration: 100,
-            useNativeDriver: true,
+            useNativeDriver: false, // Explicitly false for layout properties
         }).start();
     };
 
@@ -140,7 +142,7 @@ export function VButton({
             case 'danger':
                 return { bg: colors.accent.red, border: '#B33A3A', text: colors.text.primary };
             case 'secondary':
-                return { bg: colors.accent.amber, border: '#CC9C00', text: colors.text.inverse };
+                return { bg: colors.surfaceElevated, text: colors.text.primary };
             case 'ghost':
                 return { bg: 'transparent', border: colors.border.medium, text: colors.text.secondary };
             default:
@@ -162,7 +164,8 @@ export function VButton({
     const colorConfig = getColors();
     const sizeConfig = getSizes();
 
-    const animatedStyle = {
+    // We interpolate both transform and border, so we MUST use nativeDriver: false
+    const animatedTransform = {
         transform: [
             {
                 translateY: pressAnim.interpolate({
@@ -173,7 +176,7 @@ export function VButton({
         ],
     };
 
-    const borderStyle = {
+    const animatedBorder = {
         borderBottomWidth: pressAnim.interpolate({
             inputRange: [0, 1],
             outputRange: [sizeConfig.borderWidth, 0],
@@ -183,37 +186,51 @@ export function VButton({
     return (
         <Pressable
             onPress={() => {
+                if (loading) return;
                 playSound('click');
                 onPress();
             }}
             onPressIn={handlePressIn}
             onPressOut={handlePressOut}
-            disabled={disabled}
+            disabled={disabled || loading}
             style={[fullWidth && { width: '100%' }]}
         >
             <Animated.View
                 style={[
                     styles.vButton,
                     {
-                        backgroundColor: disabled ? colors.border.medium : colorConfig.bg,
+                        backgroundColor: (disabled || loading) ? colors.border.medium : colorConfig.bg,
                         borderBottomColor: colorConfig.border,
                         paddingVertical: sizeConfig.py,
                         paddingHorizontal: sizeConfig.px,
                     },
-                    animatedStyle,
-                    borderStyle as any,
+                    animatedTransform,
+                    animatedBorder,
                     style,
                 ]}
             >
-                {icon && <Text style={styles.vButtonIcon}>{icon}</Text>}
-                <Text
-                    style={[
-                        styles.vButtonText,
-                        { color: disabled ? colors.text.tertiary : colorConfig.text, fontSize: sizeConfig.fontSize },
-                    ]}
-                >
-                    {title}
-                </Text>
+                {loading ? (
+                    <Text
+                        style={[
+                            styles.vButtonText,
+                            { color: colors.text.tertiary, fontSize: sizeConfig.fontSize },
+                        ]}
+                    >
+                        Please wait...
+                    </Text>
+                ) : (
+                    <>
+                        {icon && <Text style={styles.vButtonIcon}>{icon}</Text>}
+                        <Text
+                            style={[
+                                styles.vButtonText,
+                                { color: disabled ? colors.text.tertiary : colorConfig.text, fontSize: sizeConfig.fontSize },
+                            ]}
+                        >
+                            {title}
+                        </Text>
+                    </>
+                )}
             </Animated.View>
         </Pressable>
     );
@@ -223,8 +240,8 @@ export function VButton({
 
 interface VCardProps {
     children: React.ReactNode;
-    variant?: 'default' | 'elevated' | 'success' | 'error';
-    style?: ViewStyle;
+    variant?: 'default' | 'elevated' | 'success' | 'error' | 'primary';
+    style?: StyleProp<ViewStyle>;
     onPress?: () => void;
 }
 
@@ -237,6 +254,19 @@ export function VCard({ children, variant = 'default', style, onPress }: VCardPr
                 return { backgroundColor: `${colors.success}15`, borderColor: colors.success };
             case 'error':
                 return { backgroundColor: `${colors.error}15`, borderColor: colors.error };
+            case 'primary':
+                // Explicitly set all sides to avoid Android black border bug with borderRadius
+                return {
+                    backgroundColor: colors.surface,
+                    borderTopWidth: 2,
+                    borderLeftWidth: 2,
+                    borderRightWidth: 2,
+                    borderBottomWidth: 4,
+                    borderTopColor: colors.primary[300],
+                    borderLeftColor: colors.primary[300],
+                    borderRightColor: colors.primary[300],
+                    borderBottomColor: colors.primary[700]
+                };
             default:
                 return { backgroundColor: colors.surface, borderColor: colors.border.light };
         }
@@ -258,13 +288,39 @@ export function VCard({ children, variant = 'default', style, onPress }: VCardPr
 
     if (onPress) {
         return (
-            <Pressable onPress={onPress}>
-                {content}
+            <Pressable onPress={onPress} style={[{ width: '100%' }, style]}>
+                <View
+                    style={[
+                        styles.vCard,
+                        cardStyle,
+                        { flex: 1 }, // Ensure inner view fills the Pressable area
+                    ]}
+                >
+                    {children}
+                </View>
             </Pressable>
         );
     }
 
     return content;
+}
+
+// ============ STYLED INPUT ============
+
+export function StyledInput({ style, ...props }: TextInputProps) {
+    return (
+        <TextInput
+            style={[{
+                backgroundColor: colors.surfaceElevated,
+                borderRadius: borderRadius.lg,
+                padding: spacing.md,
+                ...typography.body,
+                color: colors.text.primary,
+            }, style]}
+            placeholderTextColor={colors.text.tertiary}
+            {...props}
+        />
+    );
 }
 
 // ============ VOLUMETRIC INPUT ============
@@ -409,55 +465,51 @@ export function SuccessModal({ visible, xp, message = 'Отлично!', onConti
             >
                 <Animated.Text style={[styles.successEmoji, bounceStyle]}>🎉</Animated.Text>
                 <Text style={styles.successTitle}>{message}</Text>
+
                 <View style={styles.xpBadge}>
-                    <Text style={styles.xpBadgeText}>+{xp} XP</Text>
+                    <Text style={styles.xpText}>+{xp} XP</Text>
                 </View>
-                <VButton
-                    title="Продолжить"
-                    variant="success"
-                    onPress={onContinue}
-                    fullWidth
-                />
+
+                <View style={{ width: '100%', marginTop: spacing.xl }}>
+                    <VButton
+                        title="Продолжить"
+                        onPress={onContinue}
+                        fullWidth
+                    />
+                </View>
             </Animated.View>
         </View>
     );
 }
 
-// ============ STYLES ============
-
 const styles = StyleSheet.create({
-    // VButton
     vButton: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        borderRadius: borderRadius.lg,
+        borderRadius: borderRadius.xl,
+        borderBottomWidth: 4,
         gap: spacing.sm,
+    },
+    vButtonText: {
+        fontWeight: '700',
+        letterSpacing: 0.5,
     },
     vButtonIcon: {
         fontSize: 20,
+        marginRight: spacing.xs,
     },
-    vButtonText: {
-        ...typography.button,
-        textAlign: 'center',
-    },
-
-    // VCard
     vCard: {
-        borderRadius: borderRadius.xl,
-        borderWidth: 1,
-        borderBottomWidth: 4,
-        borderBottomColor: 'rgba(0,0,0,0.3)',
-        padding: spacing.xl,
+        padding: spacing.lg,
+        ...volumetric.cardBase,
     },
-
-    // VInput
     vInputContainer: {
-        gap: spacing.xs,
+        marginBottom: spacing.lg,
+        width: '100%',
     },
     vInputLabel: {
-        ...typography.bodySmall,
-        color: colors.text.secondary,
+        ...typography.caption,
+        marginBottom: spacing.xs,
         marginLeft: spacing.xs,
     },
     vInputWrapper: {
@@ -466,36 +518,37 @@ const styles = StyleSheet.create({
         backgroundColor: colors.surfaceElevated,
         borderRadius: borderRadius.lg,
         borderWidth: 2,
-        paddingHorizontal: spacing.lg,
+        borderColor: colors.border.medium,
+        paddingHorizontal: spacing.md,
+        height: 56,
     },
     vInputIcon: {
-        fontSize: 18,
+        fontSize: 20,
         marginRight: spacing.sm,
     },
     vInput: {
         flex: 1,
         ...typography.body,
         color: colors.text.primary,
-        paddingVertical: spacing.lg,
+        height: '100%',
     },
     vInputError: {
         borderColor: colors.error,
     },
     vInputErrorText: {
-        ...typography.caption,
         color: colors.error,
+        fontSize: 12,
+        marginTop: spacing.xs,
         marginLeft: spacing.xs,
     },
-
-    // VProgress
     vProgressContainer: {
+        width: '100%',
         flexDirection: 'row',
         alignItems: 'center',
-        gap: spacing.sm,
     },
     vProgressTrack: {
         flex: 1,
-        backgroundColor: colors.surfaceElevated,
+        backgroundColor: colors.border.light,
         borderRadius: borderRadius.full,
         overflow: 'hidden',
     },
@@ -504,12 +557,10 @@ const styles = StyleSheet.create({
     },
     vProgressLabel: {
         ...typography.caption,
-        color: colors.text.secondary,
-        minWidth: 40,
-        textAlign: 'right',
+        marginLeft: spacing.sm,
+        fontWeight: 'bold',
+        width: 35,
     },
-
-    // Success Modal
     successOverlay: {
         ...StyleSheet.absoluteFillObject,
         backgroundColor: 'rgba(0,0,0,0.8)',
@@ -518,34 +569,31 @@ const styles = StyleSheet.create({
         zIndex: 1000,
     },
     successModal: {
+        width: '85%',
         backgroundColor: colors.surface,
         borderRadius: borderRadius.xxl,
-        padding: spacing.xxxl,
+        padding: spacing.xxl,
         alignItems: 'center',
-        width: '85%',
-        maxWidth: 320,
-        borderWidth: 1,
-        borderColor: colors.border.light,
+        ...shadows.lg,
     },
     successEmoji: {
-        fontSize: 72,
+        fontSize: 64,
         marginBottom: spacing.lg,
     },
     successTitle: {
         ...typography.h2,
         color: colors.text.primary,
-        marginBottom: spacing.xl,
+        marginBottom: spacing.lg,
+        textAlign: 'center',
     },
     xpBadge: {
-        backgroundColor: `${colors.accent.amber}20`,
-        paddingHorizontal: spacing.xxl,
-        paddingVertical: spacing.md,
+        backgroundColor: colors.accent.amber,
+        paddingHorizontal: spacing.xl,
+        paddingVertical: spacing.sm,
         borderRadius: borderRadius.full,
-        marginBottom: spacing.xxl,
     },
-    xpBadgeText: {
+    xpText: {
         ...typography.h3,
-        color: colors.accent.amber,
-        fontWeight: '800',
+        color: colors.text.inverse,
     },
 });

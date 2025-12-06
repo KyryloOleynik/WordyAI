@@ -269,7 +269,7 @@ export default function SettingsScreen() {
                 {/* API Keys Section */}
                 <Text style={styles.sectionTitle}>API Ключи</Text>
                 <Text style={styles.settingDescription}>
-                    Добавьте свои API ключи для более качественных переводов. Без ключей используется локальная модель.
+                    Добавьте свои API ключи для более качественных переводов.
                 </Text>
 
                 {apiKeys.length > 0 && (

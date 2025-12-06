@@ -2,12 +2,13 @@ import { StyleSheet, Text, View, Pressable, ScrollView, TextInput, ActivityIndic
 import { useState, useEffect } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
-import { VProgress, VButton } from '@/components/ui/DesignSystem';
-import { CompletionScreen, UnifiedFeedbackModal } from '@/components/ui/SharedComponents';
+import { VProgress, VButton, StyledInput } from '@/components/ui/DesignSystem';
+import { CompletionScreen, UnifiedFeedbackModal, LoadingIndicator, ScreenContainer } from '@/components/ui/SharedComponents';
 import { unifiedAI, ApiKeyError } from '@/services/unifiedAIManager';
 import { addWord, getSettings, addXP, XP_REWARDS, getAllWords } from '@/services/storageService';
 import { translateWord } from '@/services/translationService';
 import { getGrammarConcepts, addOrUpdateGrammarConcept } from '@/services/database';
+import { LEVELS } from '@/constants/common';
 
 const STORY_TOPICS = [
     { id: 'adventure', label: '🏔️ Приключения' },
@@ -18,11 +19,6 @@ const STORY_TOPICS = [
     { id: 'fantasy', label: '🧙 Фэнтези' },
 ];
 
-const LEVELS = [
-    { id: 'A1-A2', label: 'Начальный', color: colors.cefr.A1 },
-    { id: 'B1-B2', label: 'Средний', color: colors.cefr.B1 },
-    { id: 'C1-C2', label: 'Продвинутый', color: colors.cefr.C1 },
-] as const;
 
 interface Question {
     question: string;
@@ -317,19 +313,18 @@ export default function StoryModeScreen() {
 
     if (isLoading && step !== 'questions') {
         return (
-            <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={colors.primary[300]} />
-                <Text style={styles.loadingText}>
-                    {step === 'level' ? 'Генерация истории...' : 'Обработка...'}
-                </Text>
-            </View>
+            <ScreenContainer style={styles.loadingContainer}>
+                <LoadingIndicator
+                    text={step === 'level' ? 'Генерация истории...' : 'Обработка...'}
+                />
+            </ScreenContainer>
         );
     }
 
     // Topic Selection
     if (step === 'topic') {
         return (
-            <View style={styles.container}>
+            <ScreenContainer>
                 <View style={styles.header}>
                     <Text style={styles.title}>Режим историй</Text>
                     <Text style={styles.subtitle}>
@@ -348,14 +343,14 @@ export default function StoryModeScreen() {
                         </Pressable>
                     ))}
                 </ScrollView>
-            </View>
+            </ScreenContainer>
         );
     }
 
     // Level Selection
     if (step === 'level') {
         return (
-            <View style={styles.container}>
+            <ScreenContainer>
                 <View style={styles.header}>
                     <Text style={styles.title}>Выберите уровень</Text>
                     <Text style={styles.subtitle}>Сложность текста</Text>
@@ -380,7 +375,7 @@ export default function StoryModeScreen() {
                     primaryAction={feedbackModal.primaryAction}
                     onClose={() => setFeedbackModal(prev => ({ ...prev, visible: false }))}
                 />
-            </View>
+            </ScreenContainer>
         );
     }
 
@@ -390,7 +385,7 @@ export default function StoryModeScreen() {
         const words = story.story.split(/(\s+)/);
 
         return (
-            <View style={styles.container}>
+            <ScreenContainer>
                 <ScrollView contentContainerStyle={styles.readingContent}>
                     <View style={styles.storyCard}>
                         <Text style={styles.storyTitle}>{story.title}</Text>
@@ -444,7 +439,9 @@ export default function StoryModeScreen() {
                         <Pressable style={styles.wordModalContent} onPress={e => e.stopPropagation()}>
                             <Text style={styles.wordModalTitle}>{wordLookup?.word}</Text>
                             {wordLookup?.isLoading ? (
-                                <ActivityIndicator color={colors.primary[300]} style={{ marginVertical: spacing.lg }} />
+                                <View style={{ padding: spacing.lg }}>
+                                    <LoadingIndicator text="Поиск..." />
+                                </View>
                             ) : (
                                 <>
                                     {/* Russian Translation */}
@@ -485,7 +482,7 @@ export default function StoryModeScreen() {
                     primaryAction={feedbackModal.primaryAction}
                     onClose={() => setFeedbackModal(prev => ({ ...prev, visible: false }))}
                 />
-            </View>
+            </ScreenContainer>
         );
     }
 
@@ -494,7 +491,7 @@ export default function StoryModeScreen() {
         const currentQuestion = story.questions[currentQuestionIndex];
 
         return (
-            <View style={styles.container}>
+            <ScreenContainer>
                 <View style={styles.header}>
                     <Text style={styles.progress}>
                         Вопрос {currentQuestionIndex + 1} из {story.questions.length}
@@ -534,12 +531,11 @@ export default function StoryModeScreen() {
                         </View>
                     ) : (
                         <View style={styles.answerContainer}>
-                            <TextInput
+                            <StyledInput
                                 style={styles.answerInput}
                                 value={userAnswer}
                                 onChangeText={setUserAnswer}
                                 placeholder="Введите ваш ответ..."
-                                placeholderTextColor={colors.text.tertiary}
                                 multiline
                             />
                             <Pressable
@@ -556,7 +552,7 @@ export default function StoryModeScreen() {
                         </View>
                     )}
                 </ScrollView>
-            </View>
+            </ScreenContainer>
         );
     }
 
@@ -595,14 +591,11 @@ export default function StoryModeScreen() {
 
 const styles = StyleSheet.create({
     container: {
-        flex: 1,
-        backgroundColor: colors.background,
+        // Handled by ScreenContainer
     },
     loadingContainer: {
-        flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: colors.background,
         padding: spacing.xl,
     },
     loadingText: {

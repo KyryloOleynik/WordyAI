@@ -105,7 +105,11 @@ class UnifiedAIManager {
                 const text = await this.callGoogleAPI(prompt, googleKey.key);
                 return { text, source: 'google', success: true };
             } catch (error: any) {
-                console.error('[UnifiedAI] Google failed:', error.message);
+                if (error.message?.includes('429')) {
+                    console.warn('[UnifiedAI] Google rate limited (429), switching...');
+                } else {
+                    console.warn('[UnifiedAI] Google error:', error.message);
+                }
                 await markKeyFailed(googleKey.id);
                 this.getStatus().then(() => this.notifyStatusChange());
             }
@@ -119,7 +123,11 @@ class UnifiedAIManager {
                 const text = await this.callPerplexityAPI(prompt, perplexityKey.key);
                 return { text, source: 'perplexity', success: true };
             } catch (error: any) {
-                console.error('[UnifiedAI] Perplexity failed:', error.message);
+                if (error.message?.includes('429')) {
+                    console.warn('[UnifiedAI] Perplexity rate limited (429), switching...');
+                } else {
+                    console.warn('[UnifiedAI] Perplexity error:', error.message);
+                }
                 await markKeyFailed(perplexityKey.id);
                 this.getStatus().then(() => this.notifyStatusChange());
             }
@@ -141,7 +149,11 @@ class UnifiedAIManager {
                 yield { text: '', source: 'google', done: true };
                 return;
             } catch (error: any) {
-                console.error('[UnifiedAI] Google streaming failed:', error.message);
+                if (error.message?.includes('429')) {
+                    console.warn('[UnifiedAI] Google rate limited (429), switching...');
+                } else {
+                    console.warn('[UnifiedAI] Google streaming warning:', error.message);
+                }
                 await markKeyFailed(googleKey.id);
             }
         }
@@ -157,7 +169,11 @@ class UnifiedAIManager {
                 yield { text: '', source: 'perplexity', done: true };
                 return;
             } catch (error: any) {
-                console.error('[UnifiedAI] Perplexity streaming failed:', error.message);
+                if (error.message?.includes('429')) {
+                    console.warn('[UnifiedAI] Perplexity streaming rate limited (429)');
+                } else {
+                    console.warn('[UnifiedAI] Perplexity streaming warning:', error.message);
+                }
                 await markKeyFailed(perplexityKey.id);
             }
         }

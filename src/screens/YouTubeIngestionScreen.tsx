@@ -2,12 +2,12 @@ import { StyleSheet, Text, View, TextInput, ActivityIndicator, ScrollView, Alert
 import { useState } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import Card from '@/components/ui/Card';
-import { VolumetricButton } from '@/components/ui/SharedComponents';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
 import { fetchYouTubeSubtitles } from '@/features/ingestion/youtubeService';
 import { extractNewWords, CEFRLevel } from '@/lib/nlp/filter';
 import { getSettings, addWord } from '@/services/storageService';
 import { translateWords } from '@/services/translationService';
+import { VButton } from '@/components/ui/DesignSystem';
 
 export default function YouTubeIngestionScreen() {
     const navigation = useNavigation();
@@ -148,10 +148,10 @@ export default function YouTubeIngestionScreen() {
                     autoCorrect={false}
                     editable={!isProcessing && !isSaving}
                 />
-                <VolumetricButton
+                <VButton
                     title="Извлечь слова"
                     onPress={handleExtract}
-                    disabled={!url || Platform.OS === 'web'}
+                    disabled={false}
                     loading={isProcessing}
                     variant="primary"
                 />
@@ -180,11 +180,11 @@ export default function YouTubeIngestionScreen() {
                     </View>
 
                     <View style={styles.actionButtons}>
-                        <VolumetricButton
+                        <VButton
                             title="Очистить всё"
                             onPress={() => setExtractedWords([])}
                         />
-                        <VolumetricButton
+                        <VButton
                             title={`Сохранить ${extractedWords.length} слов`}
                             onPress={saveWords}
                             variant="success"
@@ -275,6 +275,7 @@ const styles = StyleSheet.create({
         fontSize: 32,
     },
     headerTitle: {
+        textAlign: 'center',
         ...typography.h2,
         color: colors.text.primary,
         marginBottom: spacing.xs,
@@ -285,7 +286,8 @@ const styles = StyleSheet.create({
         textAlign: 'center',
     },
     inputCard: {
-        margin: spacing.xl,
+        margin: spacing.sm,
+        marginBottom: 0,
     },
     label: {
         ...typography.body,

@@ -38,6 +38,7 @@ export default function MatchingModeScreen() {
 
     const totalRounds = DIFFICULTY_LEVELS.length;
     const currentLevel = DIFFICULTY_LEVELS[currentRound] || DIFFICULTY_LEVELS[0];
+    const [actualTotalMatches, setActualTotalMatches] = useState(currentLevel.totalMatches);
 
     // Load initial game
     useEffect(() => {
@@ -46,14 +47,14 @@ export default function MatchingModeScreen() {
 
     // Animate progress bar (using local state to drive it)
     useEffect(() => {
-        const progress = completedMatchesInRound / currentLevel.totalMatches;
+        const progress = actualTotalMatches > 0 ? completedMatchesInRound / actualTotalMatches : 0;
         Animated.spring(progressAnim, {
             toValue: progress,
             tension: 50,
             friction: 10,
             useNativeDriver: false,
         }).start();
-    }, [completedMatchesInRound, currentLevel.totalMatches]);
+    }, [completedMatchesInRound, actualTotalMatches]);
 
     const generateAIWords = async (count: number, level: string): Promise<DictionaryWord[]> => {
         try {
@@ -80,8 +81,12 @@ Output JSON array only: [{"word": "...", "translation": "..."}]`;
                     createdAt: Date.now(),
                 } as DictionaryWord));
             }
-        } catch (e) {
-            console.error('Failed to generate AI words:', e);
+        } catch (e: any) {
+            if (e.name === 'ApiKeyError') {
+                console.warn('AI Unavailable:', e.message);
+            } else {
+                console.warn('Failed to generate AI words:', e);
+            }
         }
         return [];
     };
@@ -130,7 +135,19 @@ Output JSON array only: [{"word": "...", "translation": "..."}]`;
         }
 
         // Final shuffle
-        setWordPool(pool.sort(() => Math.random() - 0.5));
+        const finalPool = pool.sort(() => Math.random() - 0.5);
+        setWordPool(finalPool);
+
+        // Adjust completion target if we couldn't find enough words
+        // We need at least visiblePairs to start.
+        // If pool is smaller than totalNeeded, max possibilities involves refilling.
+        // Actually, the game logic consumes the pool. 
+        // If pool.length < currentLevel.totalMatches, we can only do pool.length matches.
+
+        // We have strict levels, but if AI fails/DB empty, we might have fewer.
+        // Let's cap totalMatches at pool.length.
+        setActualTotalMatches(Math.min(currentLevel.totalMatches, finalPool.length));
+
         setIsLoading(false);
     };
 
@@ -174,11 +191,19 @@ Output JSON array only: [{"word": "...", "translation": "..."}]`;
     }
 
     if (isComplete) {
+        const totalPossibleMatches = DIFFICULTY_LEVELS.reduce((acc, level) => acc + level.totalMatches, 0);
+        // Note: this total might be slightly off if some rounds had fewer words, 
+        // but for the final screen it's an approximation or we could track totalPossible.
+        // For now user requested "score relative to words provided".
+        // Let's rely on 'score' which tracks correct matches. 
+        // If valid words were fewer, max score is lower.
+
         return (
             <CompletionScreen
                 score={score}
-                total={currentLevel.totalMatches * 2} // Approximate total possible score
-                xpEarned={score} // In matching mode score roughly equals XP
+                // score={score}
+                total={score + mistakes} // This ensures 100% if no mistakes.
+                xpEarned={score}
                 onRestart={() => {
                     setCurrentRound(0); // Reset to level 1
                     setScore(0);
@@ -211,7 +236,7 @@ Output JSON array only: [{"word": "...", "translation": "..."}]`;
             <View style={{ flex: 1 }}>
                 <MatchingGame
                     words={matchingWords}
-                    totalMatches={currentLevel.totalMatches}
+                    totalMatches={actualTotalMatches}
                     visiblePairs={currentLevel.visiblePairs}
                     showTranslation={showTranslation}
                     showProgressBar={true} // Enable internal bottom progress bar

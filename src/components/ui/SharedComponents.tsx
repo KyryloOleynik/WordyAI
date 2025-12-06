@@ -1,10 +1,11 @@
 /**
  * Shared UI Components - Consistent styling across the app
  */
-import { StyleSheet, Text, View, Pressable, Animated, Modal } from 'react-native';
+import { StyleSheet, Text, View, Pressable, Animated, Modal, ViewStyle, ScrollView } from 'react-native';
 import { useRef, useEffect, useState } from 'react';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
-import * as Speech from 'expo-speech';
+import { useSpeech } from '@/hooks/useSpeech';
+import { VButton } from './DesignSystem';
 
 // ============= SUCCESS ANIMATION =============
 
@@ -146,26 +147,18 @@ export function WordInfoModal({
     cefrLevel,
     onClose,
 }: WordInfoModalProps) {
-    const [isSpeaking, setIsSpeaking] = useState(false);
+    const { speak, stop, isSpeaking } = useSpeech();
 
-    const handleSpeak = async () => {
+    const handleSpeak = () => {
         if (isSpeaking) {
-            await Speech.stop();
-            setIsSpeaking(false);
+            stop();
         } else {
-            setIsSpeaking(true);
-            await Speech.speak(word, {
-                language: 'en-US',
-                rate: 0.8,
-                onDone: () => setIsSpeaking(false),
-                onError: () => setIsSpeaking(false),
-            });
+            speak(word);
         }
     };
 
     const handleClose = () => {
-        Speech.stop();
-        setIsSpeaking(false);
+        stop();
         onClose();
     };
 
@@ -237,6 +230,26 @@ export function WordInfoModal({
                 </Pressable>
             </Pressable>
         </Modal>
+    );
+}
+
+// ============ SCREEN CONTAINER ============
+
+interface ScreenContainerProps {
+    children: React.ReactNode;
+    style?: ViewStyle;
+    padding?: boolean;
+}
+
+export function ScreenContainer({ children, style, padding = false }: ScreenContainerProps) {
+    return (
+        <View style={[
+            { flex: 1, backgroundColor: colors.background },
+            padding && { padding: spacing.lg },
+            style
+        ]}>
+            {children}
+        </View>
     );
 }
 
@@ -612,156 +625,6 @@ const streakStyles = StyleSheet.create({
         backgroundColor: colors.accent.amber,
         opacity: 0.2,
         zIndex: -1,
-    },
-});
-
-// ============= VOLUMETRIC BUTTON (3D Effect) =============
-
-interface VolumetricButtonProps {
-    title: string;
-    onPress: () => void;
-    disabled?: boolean;
-    loading?: boolean;
-    variant?: 'primary' | 'success' | 'amber';
-    icon?: string;
-    size?: 'normal' | 'large';
-}
-
-export function VolumetricButton({
-    title,
-    onPress,
-    disabled,
-    loading,
-    variant = 'primary',
-    icon,
-    size = 'normal',
-}: VolumetricButtonProps) {
-    const scaleAnim = useRef(new Animated.Value(1)).current;
-    const translateYAnim = useRef(new Animated.Value(0)).current;
-
-    const getColors = () => {
-        switch (variant) {
-            case 'success':
-                return {
-                    top: colors.accent.green,
-                    bottom: '#1a6534',
-                    text: colors.text.inverse,
-                };
-            case 'amber':
-                return {
-                    top: colors.accent.amber,
-                    bottom: '#8B5A00',
-                    text: colors.text.inverse,
-                };
-            default:
-                return {
-                    top: colors.primary[300],
-                    bottom: colors.primary[700],
-                    text: colors.text.inverse,
-                };
-        }
-    };
-
-    const colorScheme = getColors();
-
-    const handlePressIn = () => {
-        Animated.parallel([
-            Animated.timing(scaleAnim, { toValue: 0.97, duration: 100, useNativeDriver: true }),
-            Animated.timing(translateYAnim, { toValue: 3, duration: 100, useNativeDriver: true }),
-        ]).start();
-    };
-
-    const handlePressOut = () => {
-        Animated.parallel([
-            Animated.spring(scaleAnim, { toValue: 1, tension: 200, friction: 10, useNativeDriver: true }),
-            Animated.spring(translateYAnim, { toValue: 0, tension: 200, friction: 10, useNativeDriver: true }),
-        ]).start();
-    };
-
-    return (
-        <Pressable
-            onPress={onPress}
-            onPressIn={handlePressIn}
-            onPressOut={handlePressOut}
-            disabled={disabled || loading}
-        >
-            <Animated.View style={[
-                volumetricStyles.wrapper,
-                { transform: [{ scale: scaleAnim }] },
-                disabled && { opacity: 0.5 },
-            ]}>
-                {/* Shadow/Bottom layer */}
-                <View style={[
-                    volumetricStyles.shadow,
-                    { backgroundColor: colorScheme.bottom },
-                    size === 'large' && volumetricStyles.shadowLarge,
-                ]} />
-                {/* Top button */}
-                <Animated.View style={[
-                    volumetricStyles.button,
-                    { backgroundColor: colorScheme.top, transform: [{ translateY: translateYAnim }] },
-                    size === 'large' && volumetricStyles.buttonLarge,
-                ]}>
-                    <View style={volumetricStyles.highlight} />
-                    {icon && <Text style={volumetricStyles.icon}>{icon}</Text>}
-                    <Text style={[volumetricStyles.text, { color: colorScheme.text }, size === 'large' && volumetricStyles.textLarge]}>
-                        {loading ? 'Загрузка...' : title}
-                    </Text>
-                </Animated.View>
-            </Animated.View>
-        </Pressable>
-    );
-}
-
-const volumetricStyles = StyleSheet.create({
-    wrapper: {
-        position: 'relative',
-    },
-    shadow: {
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        height: 52,
-        borderRadius: borderRadius.xl,
-    },
-    shadowLarge: {
-        height: 64,
-    },
-    button: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingVertical: spacing.lg,
-        paddingHorizontal: spacing.xxl,
-        borderRadius: borderRadius.xl,
-        gap: spacing.sm,
-        position: 'relative',
-        overflow: 'hidden',
-    },
-    buttonLarge: {
-        paddingVertical: spacing.xl,
-        paddingHorizontal: spacing.xxxl,
-    },
-    highlight: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        height: '50%',
-        backgroundColor: 'rgba(255,255,255,0.15)',
-        borderTopLeftRadius: borderRadius.xl,
-        borderTopRightRadius: borderRadius.xl,
-    },
-    icon: {
-        fontSize: 22,
-    },
-    text: {
-        ...typography.bodyBold,
-        fontSize: 16,
-    },
-    textLarge: {
-        fontSize: 18,
     },
 });
 
@@ -1147,7 +1010,7 @@ export function MatchingGame({
 
     const wordCards = visibleCards.filter(c => c.type === 'word');
     const meaningCards = visibleCards.filter(c => c.type === 'meaning');
-    const progressWidth = progressAnim.interpolate({
+    const widthAnim = progressAnim.interpolate({
         inputRange: [0, 1],
         outputRange: ['0%', '100%'],
     });
@@ -1155,64 +1018,77 @@ export function MatchingGame({
     return (
         <View style={matchingStyles.container}>
             {/* Game Grid */}
-            <View style={matchingStyles.gameContainer}>
-                <Animated.View style={[matchingStyles.column, { transform: [{ translateX: shakeAnim }] }]}>
-                    <Text style={matchingStyles.columnTitle}>English</Text>
-                    {wordCards.map(card => (
-                        <Animated.View key={card.id} style={{ opacity: card.opacity }}>
-                            <Pressable
-                                style={[
-                                    matchingStyles.card,
-                                    card.isSelected && matchingStyles.cardSelected,
-                                    card.isMatched && matchingStyles.cardMatched,
-                                ]}
-                                onPress={() => handleCardPress(card)}
-                                disabled={card.isMatched || card.isFading}
-                            >
-                                <Text style={[
-                                    matchingStyles.cardText,
-                                    card.isMatched && matchingStyles.cardTextMatched,
-                                ]}>
-                                    {card.text}
-                                </Text>
-                            </Pressable>
-                        </Animated.View>
-                    ))}
-                </Animated.View>
+            <Animated.View style={[matchingStyles.gameContainer, { transform: [{ translateX: shakeAnim }] }]}>
+                <ScrollView contentContainerStyle={{ paddingBottom: spacing.xl }}>
+                    {/* Header Row */}
+                    <View style={matchingStyles.headerRow}>
+                        <Text style={[matchingStyles.columnTitle, { flex: 1 }]}>English</Text>
+                        <Text style={[matchingStyles.columnTitle, { flex: 1 }]}>
+                            {showTranslation ? 'Русский' : 'Definition'}
+                        </Text>
+                    </View>
 
-                <Animated.View style={[matchingStyles.column, { transform: [{ translateX: shakeAnim }] }]}>
-                    <Text style={matchingStyles.columnTitle}>
-                        {showTranslation ? 'Русский' : 'Definition'}
-                    </Text>
-                    {meaningCards.map(card => (
-                        <Animated.View key={card.id} style={{ opacity: card.opacity }}>
-                            <Pressable
-                                style={[
-                                    matchingStyles.card,
-                                    card.isSelected && matchingStyles.cardSelected,
-                                    card.isMatched && matchingStyles.cardMatched,
-                                ]}
-                                onPress={() => handleCardPress(card)}
-                                disabled={card.isMatched || card.isFading}
-                            >
-                                <Text style={[
-                                    matchingStyles.cardText,
-                                    matchingStyles.meaningText,
-                                    card.isMatched && matchingStyles.cardTextMatched,
-                                ]} numberOfLines={3}>
-                                    {card.text}
-                                </Text>
-                            </Pressable>
-                        </Animated.View>
-                    ))}
-                </Animated.View>
-            </View>
+                    {/* Card Rows */}
+                    {wordCards.map((wordCard, index) => {
+                        const meaningCard = meaningCards[index];
+                        return (
+                            <View key={`row-${wordCard.id}`} style={matchingStyles.cardRow}>
+                                {/* Left Card (Word) */}
+                                <Animated.View style={{ flex: 1, opacity: wordCard.opacity }}>
+                                    <Pressable
+                                        style={[
+                                            matchingStyles.card,
+                                            wordCard.isSelected && matchingStyles.cardSelected,
+                                            wordCard.isMatched && matchingStyles.cardMatched,
+                                        ]}
+                                        onPress={() => handleCardPress(wordCard)}
+                                        disabled={wordCard.isMatched || wordCard.isFading}
+                                    >
+                                        <Text style={[
+                                            matchingStyles.cardText,
+                                            wordCard.isMatched && matchingStyles.cardTextMatched,
+                                        ]}>
+                                            {wordCard.text}
+                                        </Text>
+                                    </Pressable>
+                                </Animated.View>
+
+                                {/* Spacer */}
+                                <View style={{ width: spacing.md }} />
+
+                                {/* Right Card (Meaning) */}
+                                {meaningCard && (
+                                    <Animated.View style={{ flex: 1, opacity: meaningCard.opacity }}>
+                                        <Pressable
+                                            style={[
+                                                matchingStyles.card,
+                                                meaningCard.isSelected && matchingStyles.cardSelected,
+                                                meaningCard.isMatched && matchingStyles.cardMatched,
+                                            ]}
+                                            onPress={() => handleCardPress(meaningCard)}
+                                            disabled={meaningCard.isMatched || meaningCard.isFading}
+                                        >
+                                            <Text style={[
+                                                matchingStyles.cardText,
+                                                matchingStyles.meaningText,
+                                                meaningCard.isMatched && matchingStyles.cardTextMatched,
+                                            ]} numberOfLines={3}>
+                                                {meaningCard.text}
+                                            </Text>
+                                        </Pressable>
+                                    </Animated.View>
+                                )}
+                            </View>
+                        );
+                    })}
+                </ScrollView>
+            </Animated.View>
 
             {/* Progress Bar at bottom */}
             {showProgressBar && (
                 <View style={matchingStyles.progressContainer}>
                     <View style={matchingStyles.progressTrack}>
-                        <Animated.View style={[matchingStyles.progressBar, { width: progressWidth }]} />
+                        <Animated.View style={[matchingStyles.progressBar, { width: widthAnim }]} />
                     </View>
                     <Text style={matchingStyles.progressText}>
                         {completedMatches}/{totalMatches}
@@ -1229,34 +1105,39 @@ const matchingStyles = StyleSheet.create({
     },
     gameContainer: {
         flex: 1,
-        flexDirection: 'row',
         paddingHorizontal: spacing.md,
         paddingTop: spacing.sm,
+    },
+    headerRow: {
+        flexDirection: 'row',
+        marginBottom: spacing.xs,
         gap: spacing.md,
     },
-    column: {
-        flex: 1,
-        gap: spacing.sm,
+    cardRow: {
+        flexDirection: 'row',
+        marginBottom: spacing.sm,
+        alignItems: 'stretch', // Ensures equal height
     },
     columnTitle: {
         ...typography.caption,
         color: colors.text.tertiary,
         textAlign: 'center',
         textTransform: 'uppercase',
-        marginBottom: spacing.xs,
         letterSpacing: 1,
     },
     card: {
         backgroundColor: colors.surface,
         borderRadius: borderRadius.lg,
         padding: spacing.md,
-        height: 60, // Fixed height for uniformity
+        minHeight: 60, // Minimum height, but allows growth
         justifyContent: 'center',
         alignItems: 'center',
         borderWidth: 2,
         borderColor: colors.border.light,
         borderBottomWidth: 4,
         borderBottomColor: colors.border.medium,
+        width: '100%',
+        flex: 1, // Grow to fill container height
     },
     // GREEN BORDER ONLY when selected (not filled)
     cardSelected: {
@@ -1381,16 +1262,17 @@ export function CompletionScreen({
                 </Text>
 
                 <View style={completionStyles.buttons}>
-                    <VolumetricButton
+                    <VButton
                         title="Ещё раз"
                         onPress={onRestart}
                         variant={percentage >= 50 ? 'success' : 'primary'}
                     />
                     <View style={{ height: spacing.md }} />
-                    <VolumetricButton
+                    <VButton
                         title="На главную"
                         onPress={onHome}
-                        variant="amber"
+                        variant='secondary'
+                        style={completionStyles.Bottom0}
                     />
                 </View>
             </View>
@@ -1399,6 +1281,9 @@ export function CompletionScreen({
 }
 
 const completionStyles = StyleSheet.create({
+    Bottom0: {
+        borderBottomWidth: 0,
+    },
     container: {
         flex: 1,
         padding: spacing.lg,
@@ -1571,38 +1456,40 @@ const errorPlateStyles = StyleSheet.create({
         fontWeight: '500',
     },
     infoBox: {
-        backgroundColor: colors.surfaceElevated,
+        backgroundColor: colors.surface,
         padding: spacing.md,
         borderRadius: borderRadius.md,
         gap: spacing.xs,
     },
     pattern: {
-        ...typography.bodySmall,
+        ...typography.caption,
+        color: colors.primary[700],
         fontWeight: 'bold',
-        color: colors.primary[300],
     },
     explanation: {
         ...typography.bodySmall,
         color: colors.text.secondary,
+        lineHeight: 20,
     },
     saveButton: {
-        alignSelf: 'flex-start',
-        paddingVertical: spacing.xs,
-        paddingHorizontal: spacing.md,
+        backgroundColor: colors.accent.amber,
+        padding: spacing.md,
+        borderRadius: borderRadius.md,
+        alignItems: 'center',
         marginTop: spacing.xs,
-        backgroundColor: `${colors.primary[300]}10`,
-        borderRadius: borderRadius.full,
     },
     savedButton: {
-        backgroundColor: 'transparent',
+        backgroundColor: colors.surfaceElevated,
+        borderWidth: 1,
+        borderColor: colors.border.medium,
     },
     saveText: {
-        ...typography.caption,
-        fontWeight: 'bold',
-        color: colors.primary[300],
+        ...typography.bodyBold,
+        color: colors.text.inverse,
+        fontSize: 14,
     },
     savedText: {
-        color: colors.accent.green,
+        color: colors.text.secondary,
     },
 });
 
@@ -1622,6 +1509,7 @@ interface UnifiedFeedbackModalProps {
         onPress: () => void;
     };
     onClose: () => void;
+    autoFocus?: boolean;
 }
 
 export function UnifiedFeedbackModal({
@@ -1633,81 +1521,59 @@ export function UnifiedFeedbackModal({
     secondaryAction,
     onClose
 }: UnifiedFeedbackModalProps) {
-    const scaleAnim = useRef(new Animated.Value(0)).current;
-
-    useEffect(() => {
-        if (visible) {
-            scaleAnim.setValue(0);
-            Animated.spring(scaleAnim, {
-                toValue: 1,
-                tension: 60,
-                friction: 7,
-                useNativeDriver: true
-            }).start();
-        }
-    }, [visible]);
-
-    if (!visible) return null;
-
-    const getIcon = () => {
-        switch (type) {
-            case 'success': return '🎉';
-            case 'error': return '⚠️';
-            case 'warning': return '⚡';
-            default: return 'ℹ️';
-        }
-    };
-
-    const getColor = () => {
-        switch (type) {
-            case 'success': return colors.accent.green;
-            case 'error': return colors.accent.red;
-            case 'warning': return colors.accent.amber;
-            default: return colors.primary[300];
-        }
-    };
-
     return (
-        <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
-            <Pressable style={feedbackStyles.overlay} onPress={onClose}>
-                <Pressable onPress={e => e.stopPropagation()}>
-                    <Animated.View style={[
-                        feedbackStyles.container,
-                        { transform: [{ scale: scaleAnim }] }
-                    ]}>
-                        <View style={[feedbackStyles.iconContainer, { backgroundColor: `${getColor()}20` }]}>
-                            <Text style={feedbackStyles.icon}>{getIcon()}</Text>
-                        </View>
+        <Modal
+            visible={visible}
+            transparent
+            animationType="fade"
+            onRequestClose={onClose}
+        >
+            <View style={feedbackModalStyles.overlay}>
+                <View style={feedbackModalStyles.modal}>
+                    <View style={[feedbackModalStyles.iconContainer, { backgroundColor: type === 'error' ? `${colors.accent.red}20` : type === 'success' ? `${colors.accent.green}20` : type === 'warning' ? `${colors.accent.amber}20` : `${colors.primary[300]}20` }]}>
+                        <Text style={feedbackModalStyles.icon}>
+                            {type === 'error' ? '❌' : type === 'success' ? '🎉' : type === 'warning' ? '⚠️' : 'ℹ️'}
+                        </Text>
+                    </View>
 
-                        <Text style={feedbackStyles.title}>{title}</Text>
-                        <Text style={feedbackStyles.message}>{message}</Text>
+                    <Text style={feedbackModalStyles.title}>{title}</Text>
+                    <Text style={feedbackModalStyles.message}>{message}</Text>
 
-                        <View style={feedbackStyles.actions}>
-                            {secondaryAction && (
-                                <Pressable
-                                    style={[feedbackStyles.button, feedbackStyles.secondaryButton]}
+                    <View style={feedbackModalStyles.actions}>
+                        {primaryAction && (
+                            <VButton
+                                title={primaryAction.label}
+                                onPress={primaryAction.onPress}
+                                variant={type === 'error' ? 'primary' : type === 'success' ? 'success' : 'primary'}
+                                fullWidth
+                            />
+                        )}
+                        {secondaryAction && (
+                            <View style={{ marginTop: spacing.sm, width: '100%' }}>
+                                <VButton
+                                    title={secondaryAction.label}
                                     onPress={secondaryAction.onPress}
-                                >
-                                    <Text style={feedbackStyles.secondaryButtonText}>{secondaryAction.label}</Text>
-                                </Pressable>
-                            )}
-                            <Pressable
-                                style={[feedbackStyles.button, feedbackStyles.primaryButton, { backgroundColor: getColor() }]}
-                                onPress={primaryAction ? primaryAction.onPress : onClose}
-                            >
-                                <Text style={feedbackStyles.primaryButtonText}>
-                                    {primaryAction ? primaryAction.label : 'OK'}
-                                </Text>
-                            </Pressable>
-                        </View>
-                    </Animated.View>
-                </Pressable>
-            </Pressable>
+                                    variant="secondary"
+                                    fullWidth
+                                />
+                            </View>
+                        )}
+                        {!primaryAction && !secondaryAction && (
+                            <VButton
+                                title="Закрыть"
+                                onPress={onClose}
+                                variant="secondary"
+                                fullWidth
+                            />
+                        )}
+                    </View>
+                </View>
+            </View>
         </Modal>
     );
 }
 
-const feedbackStyles = StyleSheet.create({
+const feedbackModalStyles = StyleSheet.create({
     overlay: {
         flex: 1,
         backgroundColor: 'rgba(0,0,0,0.6)',
@@ -1715,23 +1581,18 @@ const feedbackStyles = StyleSheet.create({
         alignItems: 'center',
         padding: spacing.xl,
     },
-    container: {
+    modal: {
         backgroundColor: colors.surface,
         borderRadius: borderRadius.xl,
         padding: spacing.xl,
         width: '100%',
         maxWidth: 340,
         alignItems: 'center',
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
-        elevation: 10,
     },
     iconContainer: {
         width: 64,
         height: 64,
-        borderRadius: 32,
+        borderRadius: borderRadius.full,
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: spacing.lg,
@@ -1741,41 +1602,33 @@ const feedbackStyles = StyleSheet.create({
     },
     title: {
         ...typography.h2,
-        color: colors.text.primary,
-        marginBottom: spacing.sm,
         textAlign: 'center',
+        marginBottom: spacing.sm,
+        color: colors.text.primary,
     },
     message: {
         ...typography.body,
-        color: colors.text.secondary,
         textAlign: 'center',
+        color: colors.text.secondary,
         marginBottom: spacing.xl,
-        lineHeight: 22,
     },
     actions: {
-        flexDirection: 'row',
-        gap: spacing.md,
         width: '100%',
+        gap: spacing.sm,
     },
-    button: {
-        flex: 1,
-        paddingVertical: spacing.md,
-        borderRadius: borderRadius.lg,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    secondaryButton: {
-        backgroundColor: colors.surfaceElevated,
-    },
-    primaryButton: {
-        // bg color set dynamically
-    },
-    secondaryButtonText: {
-        ...typography.bodyBold,
-        color: colors.text.primary,
-    },
-    primaryButtonText: {
-        ...typography.bodyBold,
-        color: colors.text.inverse,
-    },
+});
+
+// Helper for API Key Errors
+export const getApiKeyErrorConfig = (navigation: any, onClose: () => void) => ({
+    visible: true,
+    type: 'warning' as const,
+    title: 'Ошибка ключа API',
+    message: 'Не удалось подключиться к AI. Проверьте настройки API ключей.',
+    primaryAction: {
+        label: 'Настройки',
+        onPress: () => {
+            onClose();
+            navigation.navigate('Settings' as never);
+        }
+    }
 });

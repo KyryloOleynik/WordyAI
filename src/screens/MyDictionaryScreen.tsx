@@ -2,8 +2,8 @@ import { StyleSheet, Text, View, ScrollView, Pressable, TextInput, Modal, Activi
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
-import * as Speech from 'expo-speech';
 import * as ImagePicker from 'expo-image-picker';
+import { useSpeech } from '@/hooks/useSpeech';
 import { unifiedAI, ApiKeyError } from '@/services/unifiedAIManager';
 import { UnifiedFeedbackModal } from '@/components/ui/SharedComponents';
 import {
@@ -17,6 +17,7 @@ import {
     UserSettings
 } from '@/services/storageService';
 import { getGrammarConcepts, GrammarConcept } from '@/services/database';
+import { VButton } from '@/components/ui/DesignSystem';
 
 type FilterType = 'all' | 'new' | 'learning' | 'known';
 type MainTab = 'words' | 'grammar';
@@ -41,7 +42,8 @@ export default function MyDictionaryScreen() {
     const [selectedWord, setSelectedWord] = useState<DictionaryWord | null>(null);
     const [newWord, setNewWord] = useState('');
     const [isAddingWord, setIsAddingWord] = useState(false);
-    const [isSpeaking, setIsSpeaking] = useState(false);
+    // const [isSpeaking, setIsSpeaking] = useState(false); // Replaced by hook
+    const { speak, stop, isSpeaking } = useSpeech();
     const [isScanning, setIsScanning] = useState(false);
     const [isLoadingTranslation, setIsLoadingTranslation] = useState(false);
 
@@ -330,24 +332,16 @@ Output JSON only: {"translation": "русский перевод", "definition":
     };
 
     const closeDetailModal = () => {
-        Speech.stop();
-        setIsSpeaking(false);
+        stop();
         setShowDetailModal(false);
         setSelectedWord(null);
     };
 
-    const handleSpeak = async (word: string) => {
+    const handleSpeak = (word: string) => {
         if (isSpeaking) {
-            await Speech.stop();
-            setIsSpeaking(false);
+            stop();
         } else {
-            setIsSpeaking(true);
-            await Speech.speak(word, {
-                language: 'en-US',
-                rate: 0.8,
-                onDone: () => setIsSpeaking(false),
-                onError: () => setIsSpeaking(false),
-            });
+            speak(word);
         }
     };
 
@@ -538,12 +532,7 @@ Output JSON only: {"translation": "русский перевод", "definition":
                                         Практика: {item.practiceCount} | Усвоение: {Math.round(item.masteryScore * 100)}%
                                     </Text>
                                 </View>
-                                <Pressable
-                                    style={styles.grammarTestButton}
-                                    onPress={() => startGrammarTest(item)}
-                                >
-                                    <Text style={styles.grammarTestButtonText}>📝 Пройти тест</Text>
-                                </Pressable>
+                                <VButton style={styles.grammarTestButton} onPress={() => startGrammarTest(item)} title="📝 Пройти тест" />
                             </View>
                         )}
                     />
@@ -1125,6 +1114,7 @@ const styles = StyleSheet.create({
         borderTopColor: colors.border.light,
     },
     grammarStatText: {
+        marginTop: spacing.xs,
         ...typography.caption,
         color: colors.text.tertiary,
     },
@@ -1193,11 +1183,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.md,
         borderRadius: borderRadius.md,
         alignItems: 'center',
-    },
-    grammarTestButtonText: {
-        ...typography.bodySmall,
-        color: colors.text.inverse,
-        fontWeight: '600',
     },
     // Load translation button
     loadTranslationButton: {

@@ -3,6 +3,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigation, useRoute, useFocusEffect, RouteProp } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
 import { unifiedAI, ApiKeyError } from '@/services/unifiedAIManager';
+import { StyledInput } from '@/components/ui/DesignSystem';
 import TappableText from '@/components/ui/TappableText';
 import { LoadingIndicator, ErrorFeedbackPlate, UnifiedFeedbackModal } from '@/components/ui/SharedComponents';
 import { saveChatSession, ChatSession, ChatMessage as StoredMessage, getAllWords, addWord } from '@/services/storageService';
@@ -356,12 +357,11 @@ export default function ChatModeScreen() {
                     <Text style={styles.subtitle}>
                         Напиши тему, о которой хочешь поговорить
                     </Text>
-                    <TextInput
+                    <StyledInput
                         style={styles.customInput}
                         value={customTopic}
                         onChangeText={setCustomTopic}
                         placeholder="Например: путешествие в Японию..."
-                        placeholderTextColor={colors.text.tertiary}
                         autoFocus
                     />
                     <View style={styles.customButtons}>
@@ -476,12 +476,11 @@ export default function ChatModeScreen() {
             </ScrollView>
 
             <View style={styles.inputContainer}>
-                <TextInput
+                <StyledInput
                     style={styles.textInput}
                     value={inputText}
                     onChangeText={setInputText}
                     placeholder="Напиши на английском..."
-                    placeholderTextColor={colors.text.tertiary}
                     multiline
                     maxLength={500}
                 />

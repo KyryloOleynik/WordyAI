@@ -223,7 +223,7 @@ async function callPerplexityAI(prompt: string, apiKey: string): Promise<string>
 
 /**
  * Get AI completion with automatic fallback
- * Priority: Google -> Perplexity -> Local LLM
+ * Priority: Google -> Perplexity
  */
 export async function getAICompletion(
     prompt: string,
@@ -263,7 +263,7 @@ export async function getAICompletion(
 
 /**
  * Streaming AI completion - yields text chunks as they arrive
- * Priority: Google (streaming) -> Perplexity (streaming) -> Local LLM
+ * Priority: Google (streaming) -> Perplexity (streaming)
  */
 export async function* getAICompletionStream(prompt: string): AsyncGenerator<{ text: string; source: string; done: boolean }> {
     // Try Google streaming

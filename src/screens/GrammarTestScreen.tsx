@@ -6,6 +6,7 @@ import { StyleSheet, Text, View, SafeAreaView, ActivityIndicator, ScrollView, Pr
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
 import { VButton, VCard, playSound } from '@/components/ui/DesignSystem';
+import { UnifiedFeedbackModal } from '@/components/ui/SharedComponents';
 import { unifiedAI } from '@/services/unifiedAIManager';
 import { updateGrammarMetrics, GrammarConcept } from '@/services/database';
 
@@ -36,6 +37,14 @@ export default function GrammarTestScreen() {
     const [score, setScore] = useState({ correct: 0, total: 0 });
     const [isComplete, setIsComplete] = useState(false);
 
+    const [feedbackModal, setFeedbackModal] = useState({
+        visible: false,
+        type: 'info' as 'success' | 'warning' | 'error' | 'info',
+        title: '',
+        message: '',
+        primaryAction: null as { label: string; onPress: () => void } | null,
+    });
+
     useEffect(() => {
         if (concept) {
             generateTest();
@@ -62,6 +71,9 @@ Mix fill-blank and multiple-choice. Make them progressively harder.`;
             const response = await unifiedAI.generateText(prompt, { jsonMode: true });
 
             if (!response.success) {
+                if (response.source === 'none') {
+                    throw { name: 'ApiKeyError', message: 'No AI provider available' };
+                }
                 throw new Error('Не удалось сгенерировать тест');
             }
 
@@ -81,10 +93,28 @@ Mix fill-blank and multiple-choice. Make them progressively harder.`;
             })));
             setScore({ correct: 0, total: parsed.length });
 
-        } catch (e) {
-            setError('Не удалось создать тест. Попробуйте ещё раз.');
+        } catch (e: any) {
+            console.warn(e);
+            if (e.name === 'ApiKeyError' || (e.message && e.message.includes('API'))) {
+                setFeedbackModal({
+                    visible: true,
+                    type: 'warning',
+                    title: 'Ошибка AI',
+                    message: 'Не удалось сгенерировать тест. Проверьте настройки API ключа.',
+                    primaryAction: {
+                        label: 'Настройки',
+                        onPress: () => {
+                            setFeedbackModal(prev => ({ ...prev, visible: false }));
+                            navigation.navigate('Settings' as never);
+                        }
+                    }
+                });
+                setIsLoading(false); // Stop loading indicator
+            } else {
+                setError('Не удалось создать тест. Попробуйте ещё раз.');
+            }
         } finally {
-            setIsLoading(false);
+            if (!feedbackModal.visible) setIsLoading(false);
         }
     };
 
@@ -125,6 +155,17 @@ Mix fill-blank and multiple-choice. Make them progressively harder.`;
                     <Text style={styles.loadingText}>Генерация теста...</Text>
                     <Text style={styles.loadingSubtext}>{concept?.nameRu}</Text>
                 </View>
+                <UnifiedFeedbackModal
+                    visible={feedbackModal.visible}
+                    type={feedbackModal.type}
+                    title={feedbackModal.title}
+                    message={feedbackModal.message}
+                    primaryAction={feedbackModal.primaryAction ? {
+                        label: feedbackModal.primaryAction.label,
+                        onPress: feedbackModal.primaryAction.onPress,
+                    } : undefined}
+                    onClose={() => setFeedbackModal(prev => ({ ...prev, visible: false }))}
+                />
             </SafeAreaView>
         );
     }
@@ -218,66 +259,200 @@ Mix fill-blank and multiple-choice. Make them progressively harder.`;
                 )}
 
                 {showResult && (
-                    <View style={[styles.resultCard, isCorrect ? styles.resultCorrect : styles.resultWrong]}>
-                        <Text style={styles.resultEmoji}>{isCorrect ? '✅' : '❌'}</Text>
-                        <Text style={styles.resultText}>
-                            {isCorrect ? 'Правильно!' : `Ответ: ${current.correctAnswer}`}
+                    <View style={styles.resultContainer}>
+                        <Text style={[
+                            styles.resultText,
+                            isCorrect ? styles.resultTextCorrect : styles.resultTextWrong
+                        ]}>
+                            {isCorrect ? 'Правильно!' : `Неправильно. Правильный ответ: ${current.correctAnswer}`}
                         </Text>
+                        <VButton
+                            title={currentIndex + 1 < questions.length ? "Следующий вопрос" : "Завершить"}
+                            onPress={nextQuestion}
+                            variant={isCorrect ? 'success' : 'primary'}
+                            fullWidth
+                        />
+                    </View>
+                )}
+
+                {!showResult && (
+                    <View style={styles.footer}>
+                        <VButton
+                            title="Проверить"
+                            onPress={checkAnswer}
+                            disabled={!userAnswer}
+                            fullWidth
+                        />
                     </View>
                 )}
             </ScrollView>
-
-            <View style={styles.bottomActions}>
-                <VButton
-                    title={showResult ? 'Далее →' : 'Проверить'}
-                    variant={showResult ? (isCorrect ? 'success' : 'danger') : 'primary'}
-                    onPress={showResult ? nextQuestion : checkAnswer}
-                    disabled={!showResult && !userAnswer.trim()}
-                    fullWidth
-                />
-            </View>
+            <UnifiedFeedbackModal
+                visible={feedbackModal.visible}
+                type={feedbackModal.type}
+                title={feedbackModal.title}
+                message={feedbackModal.message}
+                primaryAction={feedbackModal.primaryAction ? {
+                    label: feedbackModal.primaryAction.label,
+                    onPress: feedbackModal.primaryAction.onPress,
+                } : undefined}
+                onClose={() => setFeedbackModal(prev => ({ ...prev, visible: false }))}
+            />
         </SafeAreaView>
     );
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: colors.background },
-    centerContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: spacing.xl },
-    loadingText: { ...typography.h3, color: colors.text.primary, marginTop: spacing.lg },
-    loadingSubtext: { ...typography.body, color: colors.text.secondary },
-    errorText: { ...typography.body, color: colors.accent.red, textAlign: 'center', marginVertical: spacing.lg },
-
-    header: { flexDirection: 'row', alignItems: 'center', padding: spacing.md, backgroundColor: colors.surface },
-    backButton: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
-    backText: { fontSize: 24, color: colors.text.primary },
-    headerTitle: { ...typography.h3, color: colors.text.primary, flex: 1 },
-    progress: { ...typography.caption, color: colors.text.secondary },
-
-    content: { padding: spacing.lg, gap: spacing.lg },
-    questionCard: { padding: spacing.xl },
-    questionText: { ...typography.h3, color: colors.text.primary, textAlign: 'center' },
-
-    optionsContainer: { gap: spacing.md },
-    optionButton: { backgroundColor: colors.surface, borderRadius: borderRadius.lg, padding: spacing.lg, borderWidth: 2, borderColor: colors.border.light },
-    optionSelected: { borderColor: colors.primary[300], backgroundColor: `${colors.primary[300]}10` },
-    optionCorrect: { borderColor: colors.accent.green, backgroundColor: `${colors.accent.green}15` },
-    optionWrong: { borderColor: colors.accent.red, backgroundColor: `${colors.accent.red}15` },
-    optionText: { ...typography.body, color: colors.text.primary, textAlign: 'center' },
-    optionTextSelected: { color: colors.primary[300], fontWeight: '700' },
-
-    answerInput: { backgroundColor: colors.surfaceElevated, borderRadius: borderRadius.lg, padding: spacing.lg, ...typography.h3, color: colors.text.primary, textAlign: 'center', borderWidth: 3, borderColor: colors.border.medium },
-    inputCorrect: { borderColor: colors.accent.green, backgroundColor: `${colors.accent.green}10` },
-    inputWrong: { borderColor: colors.accent.red, backgroundColor: `${colors.accent.red}10` },
-
-    resultCard: { flexDirection: 'row', alignItems: 'center', padding: spacing.lg, borderRadius: borderRadius.lg, gap: spacing.md },
-    resultCorrect: { backgroundColor: `${colors.accent.green}20` },
-    resultWrong: { backgroundColor: `${colors.accent.red}20` },
-    resultEmoji: { fontSize: 28 },
-    resultText: { ...typography.body, color: colors.text.primary, flex: 1 },
-
-    bottomActions: { padding: spacing.lg, backgroundColor: colors.surface },
-
-    completeTitle: { ...typography.h2, color: colors.text.primary, marginTop: spacing.lg },
-    completeScore: { ...typography.body, color: colors.text.secondary },
-    completeTopic: { ...typography.caption, color: colors.text.tertiary },
+    container: {
+        flex: 1,
+        backgroundColor: colors.background,
+    },
+    centerContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: spacing.xl,
+        gap: spacing.lg,
+    },
+    loadingText: {
+        ...typography.h3,
+        color: colors.text.primary,
+        marginTop: spacing.md,
+    },
+    loadingSubtext: {
+        ...typography.body,
+        color: colors.text.secondary,
+    },
+    errorText: {
+        ...typography.h3,
+        color: colors.text.primary,
+        textAlign: 'center',
+    },
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: spacing.md,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border.light,
+        backgroundColor: colors.surface,
+    },
+    backButton: {
+        width: 40,
+        height: 40,
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderRadius: borderRadius.full,
+        backgroundColor: colors.surfaceElevated,
+    },
+    backText: {
+        fontSize: 24,
+        color: colors.text.primary,
+    },
+    headerTitle: {
+        flex: 1,
+        textAlign: 'center',
+        ...typography.h3,
+        color: colors.text.primary,
+    },
+    progress: {
+        ...typography.bodyBold,
+        color: colors.primary[500],
+    },
+    content: {
+        padding: spacing.lg,
+        gap: spacing.xl,
+    },
+    questionCard: {
+        padding: spacing.xl,
+        minHeight: 120,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    questionText: {
+        ...typography.h3,
+        color: colors.text.primary,
+        textAlign: 'center',
+        lineHeight: 32,
+    },
+    optionsContainer: {
+        gap: spacing.md,
+    },
+    optionButton: {
+        padding: spacing.lg,
+        backgroundColor: colors.surface,
+        borderRadius: borderRadius.xl,
+        borderWidth: 2,
+        borderColor: colors.border.light,
+    },
+    optionSelected: {
+        borderColor: colors.primary[300],
+        backgroundColor: colors.primary[100],
+    },
+    optionCorrect: {
+        borderColor: colors.success,
+        backgroundColor: `${colors.success}20`,
+    },
+    optionWrong: {
+        borderColor: colors.error,
+        backgroundColor: `${colors.error}20`,
+    },
+    optionText: {
+        ...typography.body,
+        color: colors.text.primary,
+        textAlign: 'center',
+    },
+    optionTextSelected: {
+        ...typography.bodyBold,
+        color: colors.primary[700],
+    },
+    answerInput: {
+        backgroundColor: colors.surface,
+        borderWidth: 2,
+        borderColor: colors.border.medium,
+        borderRadius: borderRadius.xl,
+        padding: spacing.lg,
+        fontSize: 18,
+        color: colors.text.primary,
+    },
+    inputCorrect: {
+        borderColor: colors.success,
+        backgroundColor: `${colors.success}10`,
+    },
+    inputWrong: {
+        borderColor: colors.error,
+        backgroundColor: `${colors.error}10`,
+    },
+    footer: {
+        marginTop: spacing.xl,
+    },
+    resultContainer: {
+        gap: spacing.lg,
+        padding: spacing.lg,
+        backgroundColor: colors.surfaceElevated,
+        borderRadius: borderRadius.xl,
+        borderLeftWidth: 4,
+        borderColor: colors.primary[300],
+    },
+    resultText: {
+        ...typography.bodyBold,
+        textAlign: 'center',
+    },
+    resultTextCorrect: {
+        color: colors.success,
+    },
+    resultTextWrong: {
+        color: colors.error,
+    },
+    completeTitle: {
+        ...typography.h1,
+        color: colors.text.primary,
+    },
+    completeScore: {
+        ...typography.h2,
+        color: colors.primary[500],
+    },
+    completeTopic: {
+        ...typography.body,
+        color: colors.text.secondary,
+        marginTop: spacing.sm,
+    },
 });
