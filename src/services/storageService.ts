@@ -433,12 +433,14 @@ export async function saveChatSession(session: ChatSession): Promise<void> {
     const filtered = sessions.filter(s => s.updatedAt > cutoff);
 
     await AsyncStorage.setItem(STORAGE_KEYS.CHAT_HISTORY, JSON.stringify(filtered));
+    console.log(`[Storage] Saved chat session "${session.topic}" (${session.messages.length} msgs). Total sessions: ${filtered.length}`);
 }
 
 export async function deleteChatSession(sessionId: string): Promise<void> {
     const sessions = await getChatHistory();
     const filtered = sessions.filter(s => s.id !== sessionId);
     await AsyncStorage.setItem(STORAGE_KEYS.CHAT_HISTORY, JSON.stringify(filtered));
+    console.log(`[Storage] Deleted chat session ${sessionId}. Remaining: ${filtered.length}`);
 }
 
 export async function cleanupOldChats(): Promise<void> {

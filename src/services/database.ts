@@ -599,10 +599,30 @@ export async function addOrUpdateGrammarConcept(concept: Omit<GrammarConcept, 'i
         );
 
         if (existing) {
-            // Increment error count
+            // Parse existing examples
+            let currentExamples: string[] = [];
+            try {
+                currentExamples = JSON.parse(existing.examples || '[]');
+            } catch (e) {
+                currentExamples = [];
+            }
+
+            // Parse new examples
+            let newExamples: string[] = [];
+            try {
+                newExamples = JSON.parse(concept.examples || '[]');
+            } catch (e) {
+                newExamples = [];
+            }
+
+            // Combine and unique (simple set for strings)
+            // We prepend new examples to keep them fresh
+            const combined = [...new Set([...newExamples, ...currentExamples])].slice(0, 5); // Keep max 5
+
+            // Increment error count and update examples
             await db.runAsync(
-                'UPDATE grammar_concepts SET errorCount = errorCount + 1 WHERE id = ?',
-                [existing.id]
+                'UPDATE grammar_concepts SET errorCount = errorCount + 1, examples = ? WHERE id = ?',
+                [JSON.stringify(combined), existing.id]
             );
         } else {
             // Insert new concept

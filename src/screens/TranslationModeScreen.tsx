@@ -2,11 +2,12 @@ import { StyleSheet, Text, View, Pressable, TextInput, ScrollView, ActivityIndic
 import { useState, useEffect, useRef } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
-import { VolumetricButton, CompletionScreen } from '@/components/ui/SharedComponents';
+import { VolumetricButton, CompletionScreen, UnifiedFeedbackModal } from '@/components/ui/SharedComponents';
 import { addXP, XP_REWARDS } from '@/services/storageService';
-import { unifiedAI } from '@/services/unifiedAIManager';
+import { unifiedAI, ApiKeyError } from '@/services/unifiedAIManager';
 import { getWordsForPractice, updateWordMetrics, DictionaryWord } from '@/services/database';
 import { analyzeGrammarErrors, GrammarError } from '@/services/grammarDetectionService';
+import { saveAIResult } from '@/services/aiResponseParser';
 import TappableText from '@/components/ui/TappableText';
 
 const LEVELS = [
@@ -41,6 +42,8 @@ interface TranslationResult {
     grammarErrors?: GrammarError[];
 }
 
+// Parsing functions moved to @/services/aiResponseParser.ts
+
 export default function TranslationModeScreen() {
     const navigation = useNavigation();
 
@@ -55,6 +58,19 @@ export default function TranslationModeScreen() {
     const [isGenerating, setIsGenerating] = useState(false);
     const [exerciseCount, setExerciseCount] = useState(0);
     const [totalXP, setTotalXP] = useState(0);
+
+    const [feedbackModal, setFeedbackModal] = useState<{
+        visible: boolean;
+        type: 'success' | 'error' | 'info' | 'warning';
+        title: string;
+        message: string;
+        primaryAction?: { label: string; onPress: () => void };
+    }>({
+        visible: false,
+        type: 'info',
+        title: '',
+        message: ''
+    });
     const [aiStatus, setAiStatus] = useState<string>('Проверка AI...');
     const [vocabWords, setVocabWords] = useState<DictionaryWord[]>([]);
     const [currentWordId, setCurrentWordId] = useState<string | null>(null);
@@ -186,10 +202,14 @@ export default function TranslationModeScreen() {
                 setGrammarErrors([]);
             }
 
+            // Process feedback text to extract and save any markup (grammar/words)
+            const parseResult = await processAIResponse(evaluationResult.feedback, 'translation');
+            const cleanedFeedback = parseResult.cleanedText;
+
             const finalResult: TranslationResult = {
                 isCorrect,
                 accuracy: evaluationResult.accuracy,
-                feedback: evaluationResult.feedback,
+                feedback: cleanedFeedback,
                 suggestedTranslation: expectedTranslation,
                 errors: evaluationResult.errors,
                 grammarErrors: detectedGrammarErrors,
@@ -198,6 +218,13 @@ export default function TranslationModeScreen() {
             setResult(finalResult);
             setStep('result');
             setExerciseCount(prev => prev + 1);
+
+            // Save grammar concepts from AI evaluation to database
+            // Note: detectedGrammarErrors are from a specific service, evaluationResult.grammarConcepts are from AI
+            await saveAIResult({
+                grammarConcepts: evaluationResult.grammarConcepts as any,
+                vocabularySuggestions: []
+            });
 
             // Update word metrics if a vocabulary word was used
             if (currentWordId) {
@@ -210,23 +237,49 @@ export default function TranslationModeScreen() {
                 setTotalXP(prev => prev + xp);
                 await addXP(xp);
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error('Translation check error:', error);
-            // Simple fallback evaluation
-            const userWords = userTranslation.toLowerCase().split(/\s+/);
-            const expectedWords = expectedTranslation.toLowerCase().split(/\s+/);
-            const matched = userWords.filter(w => expectedWords.includes(w));
-            const accuracy = Math.round((matched.length / expectedWords.length) * 100);
 
-            setResult({
-                isCorrect: accuracy >= 50,
-                accuracy,
-                feedback: accuracy >= 70 ? 'Хорошо!' : 'Попробуй сравнить с правильным переводом',
-                suggestedTranslation: expectedTranslation,
-                errors: []
-            });
-            setStep('result');
-            setExerciseCount(prev => prev + 1);
+            if (error.name === 'ApiKeyError') {
+                setFeedbackModal({
+                    visible: true,
+                    type: 'warning',
+                    title: 'Ошибка ключа API',
+                    message: 'Не удалось подключиться к AI. Проверьте настройки.',
+                    primaryAction: {
+                        label: 'Настройки',
+                        onPress: () => {
+                            setFeedbackModal(prev => ({ ...prev, visible: false }));
+                            navigation.navigate('Settings');
+                        }
+                    }
+                });
+                // Do not fallback to local check if it's an API key error, 
+                // as the user needs to fix it to get proper feedback.
+            } else {
+                setFeedbackModal({
+                    visible: true,
+                    type: 'error',
+                    title: 'Ошибка',
+                    message: 'Не удалось проверить перевод. Попробуйте снова.',
+                });
+
+                // Simple fallback evaluation for non-critical errors or if we want to allow continue
+                const userWords = userTranslation.toLowerCase().split(/\s+/);
+                const expectedWords = expectedTranslation.toLowerCase().split(/\s+/);
+                const matched = userWords.filter(w => expectedWords.includes(w));
+                const accuracy = Math.round((matched.length / expectedWords.length) * 100);
+
+                setResult({
+                    isCorrect: accuracy >= 50,
+                    accuracy,
+                    feedback: accuracy >= 70 ? 'Хорошо!' : 'Попробуй сравнить с правильным переводом',
+                    suggestedTranslation: expectedTranslation,
+                    errors: []
+                });
+                setStep('result');
+                setExerciseCount(prev => prev + 1);
+            }
         } finally {
             setIsLoading(false);
         }
@@ -362,6 +415,14 @@ export default function TranslationModeScreen() {
                         </Text>
                     </View>
                 )}
+                <UnifiedFeedbackModal
+                    visible={feedbackModal.visible}
+                    type={feedbackModal.type}
+                    title={feedbackModal.title}
+                    message={feedbackModal.message}
+                    primaryAction={feedbackModal.primaryAction}
+                    onClose={() => setFeedbackModal(prev => ({ ...prev, visible: false }))}
+                />
             </View>
         );
     }
@@ -459,6 +520,14 @@ export default function TranslationModeScreen() {
                         </View>
                     </View>
                 </ScrollView>
+                <UnifiedFeedbackModal
+                    visible={feedbackModal.visible}
+                    type={feedbackModal.type}
+                    title={feedbackModal.title}
+                    message={feedbackModal.message}
+                    primaryAction={feedbackModal.primaryAction}
+                    onClose={() => setFeedbackModal(prev => ({ ...prev, visible: false }))}
+                />
             </View>
         );
     }

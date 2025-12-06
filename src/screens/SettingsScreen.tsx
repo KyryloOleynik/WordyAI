@@ -1,8 +1,11 @@
-import { StyleSheet, Text, View, ScrollView, Pressable, Switch, TextInput, Alert } from 'react-native';
+import { StyleSheet, Text, View, ScrollView, Pressable, Switch, TextInput, Alert, TouchableOpacity } from 'react-native';
 import { useState, useEffect, useCallback } from 'react';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
-import { getSettings, updateSettings, getStats, UserSettings, UserStats, calculateLevel, getLevelTitle } from '@/services/storageService';
+import {
+    getSettings, updateSettings, getStats, UserSettings, UserStats, calculateLevel, getLevelTitle,
+    getChatHistory, deleteChatSession, ChatSession
+} from '@/services/storageService';
 import {
     getAllAPIKeys,
     addAPIKey,
@@ -15,9 +18,11 @@ import {
 } from '@/services/apiKeyService';
 
 export default function SettingsScreen() {
+    const navigation = useNavigation<any>();
     const [settings, setSettings] = useState<UserSettings | null>(null);
     const [stats, setStats] = useState<UserStats | null>(null);
     const [apiKeys, setApiKeys] = useState<APIKey[]>([]);
+    const [savedSessions, setSavedSessions] = useState<ChatSession[]>([]);
     const [showAddKey, setShowAddKey] = useState(false);
     const [newKeyType, setNewKeyType] = useState<'google' | 'perplexity'>('google');
     const [newKeyValue, setNewKeyValue] = useState('');
@@ -29,10 +34,16 @@ export default function SettingsScreen() {
     );
 
     const loadData = async () => {
-        const [s, st, keys] = await Promise.all([getSettings(), getStats(), getAllAPIKeys()]);
+        const [s, st, keys, sessions] = await Promise.all([
+            getSettings(),
+            getStats(),
+            getAllAPIKeys(),
+            getChatHistory()
+        ]);
         setSettings(s);
         setStats(st);
         setApiKeys(keys);
+        setSavedSessions(sessions);
     };
 
     const handleToggleTranslation = async (value: boolean) => {
@@ -45,6 +56,25 @@ export default function SettingsScreen() {
         if (!settings) return;
         const updated = await updateSettings({ dailyGoal: goal });
         setSettings(updated);
+    };
+
+    // Session Management
+    const handleDeleteSession = async (id: string) => {
+        Alert.alert(
+            'Удалить чат?',
+            'К сожалению, если удалить чат, его нельзя будет восстановить.',
+            [
+                { text: 'Отмена', style: 'cancel' },
+                {
+                    text: 'Удалить',
+                    style: 'destructive',
+                    onPress: async () => {
+                        await deleteChatSession(id);
+                        setSavedSessions(prev => prev.filter(s => s.id !== id));
+                    },
+                },
+            ]
+        );
     };
 
     // API Key Management
@@ -199,6 +229,43 @@ export default function SettingsScreen() {
                     ))}
                 </View>
 
+                {/* Saved Chat Sessions */}
+                <Text style={styles.sectionTitle}>Сохраненные чаты</Text>
+                {savedSessions.length === 0 ? (
+                    <Text style={styles.emptyText}>Нет сохраненных сессий чата.</Text>
+                ) : (
+                    <View style={styles.sessionsList}>
+                        {savedSessions.map(session => (
+                            <View key={session.id} style={styles.sessionCard}>
+                                <Pressable
+                                    style={({ pressed }) => [
+                                        styles.sessionInfo,
+                                        pressed && { opacity: 0.7 }
+                                    ]}
+                                    onPress={() => navigation.navigate('ChatMode', { initialSession: session })}
+                                >
+                                    <Text style={styles.sessionTopic} numberOfLines={1}>
+                                        {session.customTopic || session.topic}
+                                    </Text>
+                                    <Text style={styles.sessionDate}>
+                                        {new Date(session.updatedAt).toLocaleDateString()} • {session.messages.length} сообщений
+                                    </Text>
+                                </Pressable>
+                                <TouchableOpacity
+                                    onPress={(e) => {
+                                        e.stopPropagation();
+                                        handleDeleteSession(session.id);
+                                    }}
+                                    style={styles.deleteButton}
+                                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                                >
+                                    <Text style={styles.deleteButtonText}>Удалить</Text>
+                                </TouchableOpacity>
+                            </View>
+                        ))}
+                    </View>
+                )}
+
                 {/* API Keys Section */}
                 <Text style={styles.sectionTitle}>API Ключи</Text>
                 <Text style={styles.settingDescription}>
@@ -308,6 +375,7 @@ export default function SettingsScreen() {
                     </Text>
                 </View>
 
+                {/* Other info cards kept but omitted for brevity in thought process, including here */}
                 <View style={styles.infoCard}>
                     <Text style={styles.infoTitle}>📖 Режим историй</Text>
                     <Text style={styles.infoText}>
@@ -486,6 +554,47 @@ const styles = StyleSheet.create({
         ...typography.bodySmall,
         color: colors.text.tertiary,
         marginBottom: spacing.xl,
+    },
+    // Sessions
+    sessionsList: {
+        gap: spacing.md,
+        marginBottom: spacing.xl,
+    },
+    sessionCard: {
+        backgroundColor: colors.surface,
+        borderRadius: borderRadius.lg,
+        padding: spacing.lg,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    sessionInfo: {
+        flex: 1,
+        marginRight: spacing.md,
+    },
+    sessionTopic: {
+        ...typography.bodyBold,
+        color: colors.text.primary,
+        marginBottom: spacing.xs,
+    },
+    sessionDate: {
+        ...typography.caption,
+        color: colors.text.secondary,
+    },
+    deleteButton: {
+        padding: spacing.sm,
+    },
+    deleteButtonText: {
+        ...typography.bodySmall,
+        color: colors.accent.red,
+        fontWeight: 'bold',
+    },
+    emptyText: {
+        ...typography.body,
+        color: colors.text.tertiary,
+        textAlign: 'center',
+        marginVertical: spacing.lg,
+        fontStyle: 'italic',
     },
     infoCard: {
         backgroundColor: colors.surface,

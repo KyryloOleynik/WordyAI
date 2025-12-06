@@ -8,6 +8,7 @@ import {
     getAllAPIKeys,
     getTimeoutRemaining
 } from './apiKeyService';
+import { PromptTemplates } from './promptTemplates';
 
 // Types
 export type AIBackend = 'google' | 'perplexity' | 'none';
@@ -125,12 +126,7 @@ class UnifiedAIManager {
         }
 
         // No APIs available
-        return {
-            text: '',
-            source: 'none',
-            success: false,
-            error: 'Нет доступных AI провайдеров. Добавьте API ключ в настройках.'
-        };
+        throw new ApiKeyError('Нет доступных AI провайдеров. Добавьте API ключ в настройках.');
     }
 
     async *generateTextStream(prompt: string): AsyncGenerator<{ text: string; source: AIBackend; done: boolean }> {
@@ -176,11 +172,7 @@ class UnifiedAIManager {
         translation: string,
         level: string
     ): Promise<{ sentence: string; missingWord: string } | null> {
-        const prompt = `Generate ONE English sentence using the word "${word}" (${translation}).
-Level: ${level}. 
-The sentence should be natural and help learn this word.
-Output JSON only: {"sentence": "The ___ was beautiful.", "missingWord": "${word}"}
-Replace the target word with ___ in the sentence.`;
+        const prompt = PromptTemplates.generateSentenceForWord(word, translation, level);
 
         const response = await this.generateText(prompt, { jsonMode: true });
         if (!response.success) return null;
@@ -215,10 +207,8 @@ Replace the target word with ___ in the sentence.`;
                         contents: [{
                             parts: [
                                 {
-                                    text: `Look at this image and extract ALL English words or vocabulary you can see.
-For each word, provide its Russian translation.
-Only include actual English words, not numbers or symbols.
-Output JSON array only: [{"word": "example", "translation": "пример"}, ...]` },
+                                    text: PromptTemplates.extractWordsFromImage()
+                                },
                                 {
                                     inline_data: {
                                         mime_type: 'image/jpeg',
@@ -261,19 +251,7 @@ Output JSON array only: [{"word": "example", "translation": "пример"}, ...
         level: 'A1-A2' | 'B1-B2' | 'C1-C2',
         vocabWords?: string[]
     ): Promise<{ sentence: string; hint?: string; expectedTranslation: string } | null> {
-        const vocabPart = vocabWords?.length
-            ? `Try to use these vocabulary words if appropriate: ${vocabWords.join(', ')}.`
-            : '';
-
-        const prompt = `Generate ONE Russian sentence for translation practice.
-Level: ${level}
-${vocabPart}
-
-Output JSON only: {
-    "sentence": "Русское предложение",
-    "hint": "optional hint in Russian",
-    "expectedTranslation": "English translation"
-}`;
+        const prompt = PromptTemplates.generateRussianSentence(level, vocabWords);
 
         const response = await this.generateText(prompt, { jsonMode: true });
         if (!response.success) return null;
@@ -286,152 +264,174 @@ Output JSON only: {
         }
     }
 
-    async evaluateTranslation(
-        original: string,
-        userTranslation: string,
-        expectedTranslation: string
-    ): Promise<{ accuracy: number; feedback: string; errors: string[]; grammarScore: number }> {
-        // Quick local evaluation
-        const userWords = userTranslation.toLowerCase().split(/\s+/).filter(w => w.length > 2);
-        const expectedWords = expectedTranslation.toLowerCase().split(/\s+/).filter(w => w.length > 2);
-        const matched = userWords.filter(w => expectedWords.includes(w));
-        const wordOverlap = expectedWords.length > 0 ? matched.length / expectedWords.length : 0;
+    // ============ UNIFIED EVALUATION ============
 
-        // Try AI evaluation
-        const prompt = `Evaluate this translation from Russian to English.
-Russian: "${original}"
-User translation: "${userTranslation}"
-Expected: "${expectedTranslation}"
+    async evaluate(input:
+        | { type: 'translation'; original: string; user: string; expected: string }
+        | { type: 'conversation'; userText: string; context?: string }
+        | { type: 'dialogue'; context: string; response: string }
+    ): Promise<{
+        // Common
+        feedback: string;
+        corrections: Array<{ wrong: string; correct: string; type?: 'spelling' | 'grammar' }>;
+        grammarConcepts: Array<{ name: string; nameRu: string; description: string; rule: string; example: string }>;
+        vocabularySuggestions: Array<{ word: string; translation: string; definition: string; level: string }>;
 
-Analyze:
-1. semanticScore (0.0-1.0): Does it convey the same meaning?
-2. grammarScore (0.0-1.0): Is the grammar correct?
-3. feedback: Brief feedback in Russian
-4. errors: List of specific errors in Russian (max 3)
+        // Translation specific
+        accuracy?: number;
+        grammarScore?: number;
+        errors?: string[];
 
-Output JSON: {"semanticScore": 0.8, "grammarScore": 0.9, "feedback": "...", "errors": [...]}`;
+        // Conversation specific
+        conversationResponse?: string;
+        hasErrors?: boolean;
+
+        // Dialogue specific
+        score?: number;
+    }> {
+        let prompt = '';
+        let result: any = {};
+
+        switch (input.type) {
+            case 'translation':
+                prompt = PromptTemplates.evaluateTranslation(input.original, input.user, input.expected);
+                break;
+            case 'conversation':
+                prompt = PromptTemplates.evaluateEnglishText(input.userText, input.context);
+                break;
+            case 'dialogue':
+                prompt = PromptTemplates.evaluateDialogueResponse(input.context, input.response);
+                break;
+        }
 
         const response = await this.generateText(prompt, { jsonMode: true });
+
+        // Default empty result
+        const emptyResult = {
+            feedback: '',
+            corrections: [],
+            grammarConcepts: [],
+            vocabularySuggestions: []
+        };
 
         if (response.success) {
             try {
                 const cleaned = response.text.replace(/```json/gi, '').replace(/```/g, '').trim();
                 const data = JSON.parse(cleaned);
 
-                // Combined accuracy: 50% semantic + 25% word overlap + 25% grammar
-                const accuracy = Math.round(
-                    (data.semanticScore || 0.5) * 50 +
-                    wordOverlap * 25 +
-                    (data.grammarScore || 0.5) * 25
-                );
+                // Map API response to unified format based on type
+                if (input.type === 'translation') {
+                    // Quick local calculation for translation
+                    const userWords = input.user.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+                    const expectedWords = input.expected.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+                    const matched = userWords.filter(w => expectedWords.includes(w));
+                    const wordOverlap = expectedWords.length > 0 ? matched.length / expectedWords.length : 0;
 
-                return {
-                    accuracy: Math.min(100, accuracy),
-                    feedback: data.feedback || 'Хорошая попытка!',
-                    errors: data.errors || [],
-                    grammarScore: data.grammarScore || 0.5
-                };
-            } catch {
-                // Parse error, use fallback
+                    const accuracy = Math.round(
+                        (data.semanticScore || 0.5) * 50 +
+                        wordOverlap * 25 +
+                        (data.grammarScore || 0.5) * 25
+                    );
+
+                    // Combine errors
+                    const allErrors: string[] = data.errors || [];
+                    if (data.spellingErrors) {
+                        data.spellingErrors.forEach((e: any) => allErrors.push(`Орфография: ${e.wrong} → ${e.correct}`));
+                    }
+                    if (data.grammarErrors) {
+                        data.grammarErrors.forEach((e: any) => allErrors.push(`${e.wrong} → ${e.correct}`));
+                    }
+
+                    return {
+                        ...emptyResult,
+                        feedback: data.feedback || 'Хорошая попытка!',
+                        corrections: [], // Detailed errors are in 'errors' string array for translation UI legacy
+                        grammarConcepts: data.grammarConcepts || [],
+                        vocabularySuggestions: data.vocabularySuggestions || [],
+                        accuracy: Math.min(100, accuracy),
+                        grammarScore: data.grammarScore || 0.5,
+                        errors: allErrors
+                    };
+                } else if (input.type === 'conversation') {
+                    return {
+                        ...emptyResult,
+                        feedback: '', // Conversation uses conversationResponse
+                        conversationResponse: data.conversationResponse || 'Good job!',
+                        hasErrors: data.hasErrors || false,
+                        corrections: data.corrections || [],
+                        grammarConcepts: data.grammarConcepts || [],
+                        vocabularySuggestions: data.vocabularySuggestions || []
+                    };
+                } else if (input.type === 'dialogue') {
+                    return {
+                        ...emptyResult,
+                        feedback: data.feedback || '',
+                        score: Math.round((data.score || 0.5) * 100),
+                        corrections: data.corrections || []
+                    };
+                }
+
+            } catch (e) {
+                console.error('Unified evaluate parse error:', e);
             }
         }
 
-        // Fallback evaluation
-        const fallbackAccuracy = Math.round(wordOverlap * 100);
+        return { ...emptyResult, feedback: 'AI error', accuracy: 0, hasErrors: false };
+    }
+
+    // Legacy wrappers for backward compatibility (can be removed later)
+    async evaluateTranslation(original: string, user: string, expected: string) {
+        const res = await this.evaluate({ type: 'translation', original, user, expected });
         return {
-            accuracy: fallbackAccuracy,
-            feedback: fallbackAccuracy >= 70 ? 'Хорошо!' : 'Попробуй ещё раз',
-            errors: [],
-            grammarScore: 0.5
+            accuracy: res.accuracy || 0,
+            feedback: res.feedback,
+            errors: res.errors || [],
+            grammarScore: res.grammarScore || 0,
+            grammarConcepts: res.grammarConcepts,
+            spellingErrors: [] // usage migrated to errors array
         };
     }
 
-    async generateDialogue(
-        topic: string,
-        targetWords: string[],
-        turnCount: number = 2
-    ): Promise<{ turns: Array<{ speaker: 'A' | 'B'; text: string }> } | null> {
-        const prompt = `Create a short English dialogue about "${topic}".
-Use these vocabulary words naturally: ${targetWords.join(', ')}.
-Generate ${turnCount} turns per speaker.
-
-Output JSON: {
-    "turns": [
-        {"speaker": "A", "text": "Hello, how are you today?"},
-        {"speaker": "B", "text": "I'm great, thanks for asking!"}
-    ]
-}`;
-
-        const response = await this.generateText(prompt, { jsonMode: true });
-        if (!response.success) return null;
-
-        try {
-            const cleaned = response.text.replace(/```json/gi, '').replace(/```/g, '').trim();
-            return JSON.parse(cleaned);
-        } catch {
-            return null;
-        }
+    async evaluateEnglishText(userText: string, context?: string) {
+        const res = await this.evaluate({ type: 'conversation', userText, context });
+        return {
+            hasErrors: res.hasErrors || false,
+            corrections: res.corrections,
+            grammarConcepts: res.grammarConcepts,
+            vocabularySuggestions: res.vocabularySuggestions,
+            conversationResponse: res.conversationResponse || ''
+        };
     }
 
-    async generateReadingText(
-        topic: string,
-        targetWords: string[],
-        level: string
-    ): Promise<{ text: string; questions: Array<{ question: string; correctAnswer: string }> } | null> {
-        const prompt = `Create a short English reading text about "${topic}" for ${level} learners.
-Use these vocabulary words: ${targetWords.join(', ')}.
-Generate 2-3 comprehension questions.
-
-Output JSON: {
-    "text": "The reading passage text here...",
-    "questions": [
-        {"question": "What is the main idea?", "correctAnswer": "The correct answer"}
-    ]
-}`;
-
-        const response = await this.generateText(prompt, { jsonMode: true });
-        if (!response.success) return null;
-
-        try {
-            const cleaned = response.text.replace(/```json/gi, '').replace(/```/g, '').trim();
-            return JSON.parse(cleaned);
-        } catch {
-            return null;
-        }
+    async evaluateDialogueResponse(context: string, userResponse: string) {
+        const res = await this.evaluate({ type: 'dialogue', context, response: userResponse });
+        return {
+            score: res.score || 0,
+            feedback: res.feedback,
+            corrections: res.corrections.map(c => typeof c === 'string' ? c : `${c.wrong} -> ${c.correct}`) // Handle type difference if any
+        };
     }
 
-    async evaluateDialogueResponse(
-        context: string,
-        userResponse: string
-    ): Promise<{ score: number; feedback: string; corrections: string[] }> {
-        const prompt = `You are evaluating a student's English dialogue response.
-Context: ${context}
-Student's response: "${userResponse}"
-
-Evaluate:
-1. Is the response appropriate for the context?
-2. Is the grammar correct?
-3. Provide brief feedback in Russian.
-
-Output JSON: {"score": 0.8, "feedback": "Отличный ответ!", "corrections": []}`;
-
-        const response = await this.generateText(prompt, { jsonMode: true });
-
-        if (response.success) {
+    /**
+     * Helper to reliably parse JSON from AI response
+     */
+    private parseJSON<T>(text: string): T | null {
+        try {
+            // First try simple parse
+            return JSON.parse(text);
+        } catch (e) {
+            // Try extracting JSON block
             try {
-                const cleaned = response.text.replace(/```json/gi, '').replace(/```/g, '').trim();
-                const data = JSON.parse(cleaned);
-                return {
-                    score: Math.round((data.score || 0.5) * 100),
-                    feedback: data.feedback || 'Хорошо!',
-                    corrections: data.corrections || []
-                };
-            } catch {
-                // Parse error
+                const match = text.match(/\{[\s\S]*\}/);
+                if (match) {
+                    return JSON.parse(match[0]);
+                }
+            } catch (e2) {
+                // Failed to extract
             }
         }
-
-        return { score: 50, feedback: 'Неплохо!', corrections: [] };
+        console.warn('Failed to parse JSON from AI response:', text.substring(0, 100) + '...');
+        return null;
     }
 
     async generateStoryWithQuestions(
@@ -440,48 +440,12 @@ Output JSON: {"score": 0.8, "feedback": "Отличный ответ!", "correct
         vocabularyWords?: string[],
         grammarFocus?: string[]
     ): Promise<{ title: string; story: string; questions: Array<{ question: string; correctAnswer: string }> } | null> {
-        const levelGuide = {
-            'A1-A2': 'Use simple vocabulary and short sentences. Present tense mostly.',
-            'B1-B2': 'Use varied vocabulary and sentence structures. Past and present tenses.',
-            'C1-C2': 'Use sophisticated vocabulary, idioms, and complex sentences.',
-        };
-
-        // Build vocabulary section if words provided
-        const vocabSection = vocabularyWords && vocabularyWords.length > 0
-            ? `\nIMPORTANT: Incorporate these vocabulary words naturally into the story: ${vocabularyWords.join(', ')}.`
-            : '';
-
-        // Build grammar section if concepts provided
-        const grammarSection = grammarFocus && grammarFocus.length > 0
-            ? `\nIncorporate these grammar structures: ${grammarFocus.join(', ')}.`
-            : '';
-
-        const prompt = `Create a short engaging story for English learners.
-Topic: ${topic}
-Language Level: ${level}
-Guidelines: ${levelGuide[level]}${vocabSection}${grammarSection}
-
-The story should be 5-7 sentences long.
-Create 4 comprehension questions about the story (mix of detail and inference questions).
-
-Output strictly JSON:
-{
-    "title": "Story Title",
-    "story": "The complete story text...",
-    "questions": [
-        {"question": "Question about the story?", "correctAnswer": "The correct answer"}
-    ]
-}`;
+        const prompt = PromptTemplates.generateStoryWithQuestions(topic, level, vocabularyWords, grammarFocus);
 
         const response = await this.generateText(prompt, { jsonMode: true });
         if (!response.success) return null;
 
-        try {
-            const cleaned = response.text.replace(/```json/gi, '').replace(/```/g, '').trim();
-            return JSON.parse(cleaned);
-        } catch {
-            return null;
-        }
+        return this.parseJSON(response.text);
     }
 
     async checkStoryAnswer(
@@ -490,26 +454,15 @@ Output strictly JSON:
         correctAnswer: string,
         storyContext: string
     ): Promise<{ isCorrect: boolean; feedback: string }> {
-        const prompt = `Story context: "${storyContext}"
-Question: "${question}"
-Expected answer: "${correctAnswer}"
-Student's answer: "${userAnswer}"
-
-Evaluate if the student's answer is correct or acceptable.
-
-Output strictly JSON:
-{ "isCorrect": true/false, "feedback": "Brief encouraging feedback in Russian" }`;
+        const prompt = PromptTemplates.checkStoryAnswer(question, userAnswer, correctAnswer, storyContext);
 
         const response = await this.generateText(prompt, { jsonMode: true });
-
-        if (response.success) {
-            try {
-                const cleaned = response.text.replace(/```json/gi, '').replace(/```/g, '').trim();
-                return JSON.parse(cleaned);
-            } catch { }
+        if (!response.success) {
+            return { isCorrect: false, feedback: 'Не удалось проверить ответ. Попробуйте ещё раз.' };
         }
 
-        return { isCorrect: false, feedback: 'Не удалось проверить ответ' };
+        const data = this.parseJSON<{ isCorrect: boolean; feedback: string }>(response.text);
+        return data || { isCorrect: false, feedback: 'Ошибка проверки.' };
     }
 
     // ============ PRIVATE API METHODS ============
@@ -535,7 +488,7 @@ Output strictly JSON:
         return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     }
 
-    private async *streamGoogleAPI(prompt: string, apiKey: string): AsyncGenerator<string> {
+    private async * streamGoogleAPI(prompt: string, apiKey: string): AsyncGenerator<string> {
         const response = await fetch(
             `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse&key=${apiKey}`,
             {
@@ -601,7 +554,7 @@ Output strictly JSON:
         return data.choices?.[0]?.message?.content || '';
     }
 
-    private async *streamPerplexityAPI(prompt: string, apiKey: string): AsyncGenerator<string> {
+    private async * streamPerplexityAPI(prompt: string, apiKey: string): AsyncGenerator<string> {
         const response = await fetch('https://api.perplexity.ai/chat/completions', {
             method: 'POST',
             headers: {
@@ -655,4 +608,11 @@ export const unifiedAI = UnifiedAIManager.getInstance();
 export async function getAIBackend(): Promise<AIBackend> {
     const status = await unifiedAI.getStatus();
     return status.activeBackend;
+}
+
+export class ApiKeyError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'ApiKeyError';
+    }
 }

@@ -1,10 +1,11 @@
-import { StyleSheet, Text, View, ScrollView, Pressable, TextInput, Modal, ActivityIndicator, FlatList, Alert } from 'react-native';
-import { useState, useCallback } from 'react';
+import { StyleSheet, Text, View, ScrollView, Pressable, TextInput, Modal, ActivityIndicator, FlatList, Animated } from 'react-native';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
 import * as Speech from 'expo-speech';
 import * as ImagePicker from 'expo-image-picker';
-import { unifiedAI } from '@/services/unifiedAIManager';
+import { unifiedAI, ApiKeyError } from '@/services/unifiedAIManager';
+import { UnifiedFeedbackModal } from '@/components/ui/SharedComponents';
 import {
     getAllWords,
     addWord,
@@ -19,6 +20,12 @@ import { getGrammarConcepts, GrammarConcept } from '@/services/database';
 
 type FilterType = 'all' | 'new' | 'learning' | 'known';
 type MainTab = 'words' | 'grammar';
+
+// Toast notification type
+interface ToastNotification {
+    message: string;
+    type: 'success' | 'error' | 'info';
+}
 
 export default function MyDictionaryScreen() {
     const navigation = useNavigation<any>();
@@ -37,6 +44,43 @@ export default function MyDictionaryScreen() {
     const [isSpeaking, setIsSpeaking] = useState(false);
     const [isScanning, setIsScanning] = useState(false);
     const [isLoadingTranslation, setIsLoadingTranslation] = useState(false);
+
+    const [feedbackModal, setFeedbackModal] = useState<{
+        visible: boolean;
+        type: 'success' | 'error' | 'info' | 'warning';
+        title: string;
+        message: string;
+        primaryAction?: { label: string; onPress: () => void };
+    }>({
+        visible: false,
+        type: 'info',
+        title: '',
+        message: ''
+    });
+
+    // Toast notification
+    const [toast, setToast] = useState<ToastNotification | null>(null);
+    const toastAnim = useRef(new Animated.Value(-100)).current;
+
+    // Show toast with slide-down animation
+    const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+        setToast({ message, type });
+        toastAnim.setValue(-100);
+        Animated.sequence([
+            Animated.spring(toastAnim, {
+                toValue: 0,
+                useNativeDriver: true,
+                tension: 80,
+                friction: 10,
+            }),
+            Animated.delay(3000),
+            Animated.timing(toastAnim, {
+                toValue: -100,
+                duration: 300,
+                useNativeDriver: true,
+            }),
+        ]).start(() => setToast(null));
+    };
 
     // Manually load translation for selected word
     const loadTranslation = async () => {
@@ -86,7 +130,7 @@ Output JSON only: {"translation": "русский перевод", "definition":
         try {
             const { status } = await ImagePicker.requestCameraPermissionsAsync();
             if (status !== 'granted') {
-                Alert.alert('Ошибка', 'Нужно разрешение на доступ к камере');
+                showToast('Нужно разрешение на доступ к камере', 'error');
                 return;
             }
 
@@ -101,7 +145,7 @@ Output JSON only: {"translation": "русский перевод", "definition":
             const extracted = await unifiedAI.extractWordsFromImage(result.assets[0].base64);
 
             if (!extracted || extracted.length === 0) {
-                Alert.alert('Результат', 'Не удалось распознать слова на фото');
+                showToast('Не удалось распознать слова на фото', 'info');
                 setIsScanning(false);
                 return;
             }
@@ -126,10 +170,10 @@ Output JSON only: {"translation": "русский перевод", "definition":
             }
 
             await loadData();
-            Alert.alert('✅ Готово!', `Добавлено ${extracted.length} слов из фото`);
+            showToast(`✅ Добавлено ${extracted.length} слов из фото`, 'success');
         } catch (error) {
             console.error('Photo scan error:', error);
-            Alert.alert('Ошибка', 'Не удалось обработать фото');
+            showToast('Не удалось обработать фото', 'error');
         } finally {
             setIsScanning(false);
         }
@@ -437,6 +481,23 @@ Output JSON only: {"translation": "русский перевод", "definition":
                                 </View>
                                 <Text style={styles.grammarEnglish}>{item.name}</Text>
                                 <Text style={styles.grammarDesc} numberOfLines={2}>{item.description}</Text>
+
+                                {item.examples && item.examples !== '[]' && (
+                                    <View style={styles.grammarExamplesContainer}>
+                                        <Text style={styles.grammarExamplesLabel}>Примеры ошибок:</Text>
+                                        {(() => {
+                                            try {
+                                                const parsed = JSON.parse(item.examples);
+                                                return parsed.slice(0, 2).map((ex: string, i: number) => (
+                                                    <Text key={i} style={styles.grammarExampleText}>• {ex}</Text>
+                                                ));
+                                            } catch (e) {
+                                                return null;
+                                            }
+                                        })()}
+                                    </View>
+                                )}
+
                                 <View style={styles.grammarStats}>
                                     <Text style={styles.grammarStatText}>
                                         Практика: {item.practiceCount} | Усвоение: {Math.round(item.masteryScore * 100)}%
@@ -603,6 +664,32 @@ Output JSON only: {"translation": "русский перевод", "definition":
                     </Pressable>
                 </Pressable>
             </Modal>
+
+            {/* Loading Overlay when scanning */}
+            {isScanning && (
+                <View style={styles.scanningOverlay}>
+                    <View style={styles.scanningContent}>
+                        <ActivityIndicator size="large" color={colors.primary[300]} />
+                        <Text style={styles.scanningText}>Распознавание слов...</Text>
+                        <Text style={styles.scanningSubtext}>Ожидание ответа ИИ</Text>
+                    </View>
+                </View>
+            )}
+
+            {/* Toast Notification */}
+            {toast && (
+                <Animated.View
+                    style={[
+                        styles.toastContainer,
+                        { transform: [{ translateY: toastAnim }] },
+                        toast.type === 'success' && styles.toastSuccess,
+                        toast.type === 'error' && styles.toastError,
+                        toast.type === 'info' && styles.toastInfo,
+                    ]}
+                >
+                    <Text style={styles.toastText}>{toast.message}</Text>
+                </Animated.View>
+            )}
         </View>
     );
 }
@@ -1081,5 +1168,79 @@ const styles = StyleSheet.create({
         ...typography.bodySmall,
         color: colors.text.inverse,
         fontWeight: '600',
+    },
+    grammarExamplesContainer: {
+        marginTop: spacing.sm,
+        padding: spacing.sm,
+        backgroundColor: colors.surfaceElevated,
+        borderRadius: borderRadius.sm,
+    },
+    grammarExamplesLabel: {
+        ...typography.caption,
+        color: colors.text.secondary,
+        marginBottom: spacing.xs,
+        fontWeight: '600',
+    },
+    grammarExampleText: {
+        ...typography.caption,
+        color: colors.text.primary,
+        fontStyle: 'italic',
+    },
+    // Scanning overlay styles
+    scanningOverlay: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.85)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 1000,
+    },
+    scanningContent: {
+        backgroundColor: colors.surface,
+        borderRadius: borderRadius.xxl,
+        padding: spacing.xxxl,
+        alignItems: 'center',
+        gap: spacing.md,
+    },
+    scanningText: {
+        ...typography.h3,
+        color: colors.text.primary,
+        marginTop: spacing.lg,
+    },
+    scanningSubtext: {
+        ...typography.bodySmall,
+        color: colors.text.secondary,
+    },
+    // Toast notification styles
+    toastContainer: {
+        position: 'absolute',
+        top: 50,
+        left: spacing.lg,
+        right: spacing.lg,
+        padding: spacing.lg,
+        borderRadius: borderRadius.lg,
+        zIndex: 1001,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 8,
+    },
+    toastSuccess: {
+        backgroundColor: colors.accent.green,
+    },
+    toastError: {
+        backgroundColor: colors.accent.red,
+    },
+    toastInfo: {
+        backgroundColor: colors.accent.blue,
+    },
+    toastText: {
+        ...typography.bodyBold,
+        color: colors.text.inverse,
+        textAlign: 'center',
     },
 });

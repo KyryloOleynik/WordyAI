@@ -1,23 +1,28 @@
 import { StyleSheet, Text, View, TextInput, Pressable, ScrollView, KeyboardAvoidingView, Platform, Modal, ActivityIndicator } from 'react-native';
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect, RouteProp } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
-import { unifiedAI } from '@/services/unifiedAIManager';
+import { unifiedAI, ApiKeyError } from '@/services/unifiedAIManager';
 import TappableText from '@/components/ui/TappableText';
-import { LoadingIndicator, ErrorFeedbackPlate } from '@/components/ui/SharedComponents';
-import { saveChatSession, ChatSession, ChatMessage as StoredMessage, getAllWords } from '@/services/storageService';
+import { LoadingIndicator, ErrorFeedbackPlate, UnifiedFeedbackModal } from '@/components/ui/SharedComponents';
+import { saveChatSession, ChatSession, ChatMessage as StoredMessage, getAllWords, addWord } from '@/services/storageService';
 import { getGrammarConcepts, GrammarConcept, DictionaryWord, updateWordMetrics } from '@/services/database';
-import { analyzeChatGrammar, GrammarError } from '@/services/grammarDetectionService';
+import { saveAIResult, trackWordUsage } from '@/services/aiResponseParser';
+import { GrammarError } from '@/services/grammarDetectionService';
 
 interface ChatMessage {
     id: string;
     role: 'user' | 'assistant';
     content: string;
     corrections?: string | null;
-    grammarError?: GrammarError | null; // For detailed feedback plate
+    grammarError?: GrammarError | null;
     timestamp?: number;
     isStreaming?: boolean;
 }
+
+type RootStackParamList = {
+    ChatMode: { initialSession?: ChatSession };
+};
 
 const TOPICS = [
     { id: 'ai_suggested', label: '🤖 AI предлагает', value: 'ai_suggested' },
@@ -32,8 +37,8 @@ const TOPICS = [
 
 export default function ChatModeScreen() {
     const navigation = useNavigation<any>();
+    const route = useRoute<RouteProp<RootStackParamList, 'ChatMode'>>();
 
-    // No more waiting for model - unifiedAI handles backend selection
     const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
     const [customTopic, setCustomTopic] = useState('');
     const [showCustomInput, setShowCustomInput] = useState(false);
@@ -46,6 +51,20 @@ export default function ChatModeScreen() {
     const [aiSuggestedTopic, setAiSuggestedTopic] = useState<string | null>(null);
     const [vocabWords, setVocabWords] = useState<DictionaryWord[]>([]);
     const scrollViewRef = useRef<ScrollView>(null);
+
+    // Initialize from saved session if present
+    useEffect(() => {
+        if (route.params?.initialSession) {
+            const session = route.params.initialSession;
+            setSessionId(session.id);
+            setSelectedTopic(session.topic);
+            if (session.customTopic) setCustomTopic(session.customTopic);
+            setMessages(session.messages.map(m => ({
+                ...m,
+                role: m.role as 'user' | 'assistant'
+            })));
+        }
+    }, [route.params?.initialSession]);
 
     // Load vocabulary on mount
     useEffect(() => {
@@ -196,122 +215,110 @@ export default function ChatModeScreen() {
         setStreamingText('');
 
         try {
-            // Build prompt for the conversation
+            // Build context from conversation history
             const conversationHistory = newMessages
                 .slice(-6)
                 .map(m => `${m.role === 'user' ? 'Student' : 'Teacher'}: ${m.content}`)
                 .join('\n');
 
-            const prompt = `You are an English conversation partner helping a Russian speaker practice English.
-Topic: ${selectedTopic || 'general conversation'}
-
-Conversation so far:
-${conversationHistory}
-
-If the student made grammar or vocabulary mistakes, start with a BRIEF correction in this format:
-"❌ [mistake] → ✅ [correction]"
-
-Then continue the conversation naturally. Keep your response SHORT (2-3 sentences max). Be encouraging. Respond in English.`;
+            // Use structured evaluation for the user's message
+            const evaluation = await unifiedAI.evaluateEnglishText(
+                userMessage.content,
+                `Topic: ${selectedTopic || 'general conversation'}. Conversation: ${conversationHistory}`
+            );
 
             const assistantId = (Date.now() + 1).toString();
-            let fullText = '';
 
-            // Add assistant message placeholder
-            setMessages(prev => [...prev, {
-                id: assistantId,
-                role: 'assistant',
-                content: '...',
-                timestamp: Date.now(),
-                isStreaming: true,
-            }]);
+            // Save all structured data (grammar, vocab)
+            await saveAIResult({
+                grammarConcepts: evaluation.grammarConcepts as any,
+                vocabularySuggestions: evaluation.vocabularySuggestions as any
+            });
 
-            // Try streaming first with timeout
-            let streamSucceeded = false;
-            const streamTimeout = setTimeout(() => {
-                if (!streamSucceeded && fullText === '') {
-                    // Streaming didn't work, fallback to non-streaming
-                    console.log('[Chat] Stream timeout, using non-streaming fallback');
-                }
-            }, 5000);
+            // Store correction info if errors found
+            const correctionText = evaluation.hasErrors && evaluation.corrections.length > 0
+                ? evaluation.corrections[0]
+                : null;
 
-            try {
-                for await (const { text, source, done } of unifiedAI.generateTextStream(prompt)) {
-                    if (done) break;
-                    fullText += text;
-                    streamSucceeded = true;
-                    setStreamingText(fullText);
-
-                    setMessages(prev => prev.map(m =>
-                        m.id === assistantId
-                            ? { ...m, content: fullText }
-                            : m
-                    ));
-                }
-                clearTimeout(streamTimeout);
-            } catch (streamError) {
-                console.warn('[Chat] Streaming failed, using fallback:', streamError);
-                clearTimeout(streamTimeout);
-            }
-
-            // If stream didn't produce any text, try non-streaming
-            if (!fullText) {
-                console.log('[Chat] Using non-streaming fallback');
-                const response = await unifiedAI.generateText(prompt);
-                fullText = response.success ? response.text : 'AI временно недоступен. Попробуйте позже.';
-            }
-
-            // Finalize message
+            // Add assistant message with the response
             setMessages(prev => {
-                const updated = prev.map(m =>
-                    m.id === assistantId
-                        ? { ...m, content: fullText, isStreaming: false }
-                        : m
-                );
+                const updated = [...prev, {
+                    id: assistantId,
+                    role: 'assistant' as const,
+                    content: evaluation.conversationResponse,
+                    timestamp: Date.now(),
+                    isStreaming: false,
+                    corrections: correctionText ? `${correctionText.wrong} → ${correctionText.correct}` : null,
+                    grammarError: evaluation.grammarConcepts.length > 0 ? {
+                        pattern: evaluation.grammarConcepts[0].name,
+                        patternRu: evaluation.grammarConcepts[0].nameRu,
+                        description: evaluation.grammarConcepts[0].description,
+                        example: evaluation.grammarConcepts[0].example,
+                        userMistake: correctionText?.wrong || '',
+                    } : null,
+                }];
                 saveSession(updated, selectedTopic || 'general', customTopic || undefined);
                 return updated;
             });
 
             // Track word usage from user message
-            // Check if user correctly used vocabulary words
             const userText = userMessage.content.toLowerCase();
-            const hasCorrection = fullText.includes('❌') && fullText.includes('✅');
+            // We use the helper to track usage against known words
+            // Logic: if the word appears in "corrections.wrong", then it was used incorrectly.
+            // Simplified: we assume 'correct' unless explicitly corrected.
+            // Since trackWordUsage takes a boolean for whole text correctness OR we iterate manually.
+            // I'll use manual iteration with trackWordUsage per word for precision
 
             for (const word of vocabWords) {
                 if (userText.includes(word.text.toLowerCase())) {
-                    // User used this word - check if corrected
-                    const wordWasCorrected = hasCorrection && fullText.toLowerCase().includes(word.text.toLowerCase());
-                    // If no correction mentioning this word -> correct usage
-                    await updateWordMetrics(word.id, 'translation', !wordWasCorrected);
-                    console.log('[Chat] Word tracked:', word.text, 'correct:', !wordWasCorrected);
+                    const wordWasCorrected = evaluation.corrections.some(c =>
+                        c.wrong.toLowerCase().includes(word.text.toLowerCase())
+                    );
+                    await trackWordUsage(userText, [word], !wordWasCorrected);
                 }
             }
-
-            // BACKGROUND GRAMMAR ANALYSIS (for Dictionary)
-            // We do this after the chat UI update so it doesn't block the user
-            analyzeChatGrammar(userMessage.content, selectedTopic || 'General')
-                .then(errors => {
-                    if (errors && errors.length > 0) {
-                        const topError = errors[0];
-                        // Update the ASSISTANT message to show the specific grammar plate
-                        setMessages(currentMsgs =>
-                            currentMsgs.map(m =>
-                                m.id === assistantId
-                                    ? { ...m, grammarError: topError }
-                                    : m
-                            )
-                        );
-                    }
-                })
-                .catch(err => console.error('Bg grammar analysis error:', err));
-
-        } catch (error) {
+        } catch (error: any) {
             console.error('Chat error:', error);
+
+            // Remove the user message that failed to send or show error state
+            // Better UX: Keep message but show error indicator? 
+            // For now, let's just delete the temporary user message or marking it as failed is complex without message status.
+            // Simple approach: standard error handling.
+
+            if (error.name === 'ApiKeyError') {
+                setFeedbackModal({
+                    visible: true,
+                    type: 'warning',
+                    title: 'Ошибка ключа API',
+                    message: 'Не удалось подключиться к AI. Проверьте API ключ в настройках.',
+                    primaryAction: {
+                        label: 'Настройки',
+                        onPress: () => {
+                            setFeedbackModal(prev => ({ ...prev, visible: false }));
+                            navigation.navigate('Settings');
+                        }
+                    }
+                });
+            } else {
+                setFeedbackModal({
+                    visible: true,
+                    type: 'error',
+                    title: 'Ошибка AI',
+                    message: 'Произошла ошибка при генерации ответа. Попробуйте позже.',
+                    primaryAction: {
+                        label: 'OK',
+                        onPress: () => setFeedbackModal(prev => ({ ...prev, visible: false }))
+                    }
+                });
+            }
+
+            // Fallback message in chat
             setMessages(prev => [
                 ...prev,
                 {
                     id: (Date.now() + 1).toString(),
                     role: 'assistant',
-                    content: 'Произошла ошибка. Попробуй ещё раз.',
+                    content: '⚠️ Произошла ошибка. Проверьте соединение или настройки API.',
                     timestamp: Date.now(),
                 },
             ]);
@@ -320,6 +327,19 @@ Then continue the conversation naturally. Keep your response SHORT (2-3 sentence
             setStreamingText('');
         }
     };
+
+    const [feedbackModal, setFeedbackModal] = useState<{
+        visible: boolean;
+        type: 'success' | 'error' | 'info' | 'warning';
+        title: string;
+        message: string;
+        primaryAction?: { label: string; onPress: () => void };
+    }>({
+        visible: false,
+        type: 'info',
+        title: '',
+        message: ''
+    });
 
     useEffect(() => {
         scrollViewRef.current?.scrollToEnd({ animated: true });
@@ -473,6 +493,15 @@ Then continue the conversation naturally. Keep your response SHORT (2-3 sentence
                     <Text style={styles.sendButtonText}>➤</Text>
                 </Pressable>
             </View>
+
+            <UnifiedFeedbackModal
+                visible={feedbackModal.visible}
+                type={feedbackModal.type}
+                title={feedbackModal.title}
+                message={feedbackModal.message}
+                primaryAction={feedbackModal.primaryAction}
+                onClose={() => setFeedbackModal(prev => ({ ...prev, visible: false }))}
+            />
         </KeyboardAvoidingView>
     );
 }

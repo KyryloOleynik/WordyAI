@@ -3,11 +3,11 @@ import { useState, useEffect } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
 import { VProgress, VButton } from '@/components/ui/DesignSystem';
-import { CompletionScreen } from '@/components/ui/SharedComponents';
-import { unifiedAI } from '@/services/unifiedAIManager';
+import { CompletionScreen, UnifiedFeedbackModal } from '@/components/ui/SharedComponents';
+import { unifiedAI, ApiKeyError } from '@/services/unifiedAIManager';
 import { addWord, getSettings, addXP, XP_REWARDS, getAllWords } from '@/services/storageService';
 import { translateWord } from '@/services/translationService';
-import { getGrammarConcepts } from '@/services/database';
+import { getGrammarConcepts, addOrUpdateGrammarConcept } from '@/services/database';
 
 const STORY_TOPICS = [
     { id: 'adventure', label: '🏔️ Приключения' },
@@ -57,6 +57,19 @@ export default function StoryModeScreen() {
     const [addedWords, setAddedWords] = useState<Set<string>>(new Set());
     const [showTranslation, setShowTranslation] = useState(true);
 
+    const [feedbackModal, setFeedbackModal] = useState<{
+        visible: boolean;
+        type: 'success' | 'error' | 'info' | 'warning';
+        title: string;
+        message: string;
+        primaryAction?: { label: string; onPress: () => void };
+    }>({
+        visible: false,
+        type: 'info',
+        title: '',
+        message: ''
+    });
+
     useEffect(() => {
         getSettings().then(s => setShowTranslation(s.showTranslation));
     }, []);
@@ -101,9 +114,38 @@ export default function StoryModeScreen() {
             if (result) {
                 setStory(result);
                 setStep('reading');
+            } else {
+                setFeedbackModal({
+                    visible: true,
+                    type: 'error',
+                    title: 'Ошибка',
+                    message: 'Не удалось создать историю. Попробуйте другую тему или уровень.'
+                });
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error('Story generation error:', error);
+            if (error.name === 'ApiKeyError') {
+                setFeedbackModal({
+                    visible: true,
+                    type: 'warning',
+                    title: 'Ошибка ключа API',
+                    message: 'Для создания историй нужен API ключ.',
+                    primaryAction: {
+                        label: 'Настройки',
+                        onPress: () => {
+                            setFeedbackModal(prev => ({ ...prev, visible: false }));
+                            navigation.navigate('Settings' as never);
+                        }
+                    }
+                });
+            } else {
+                setFeedbackModal({
+                    visible: true,
+                    type: 'error',
+                    title: 'Ошибка',
+                    message: 'Произошла ошибка при генерации истории.'
+                });
+            }
         } finally {
             setIsLoading(false);
         }
@@ -182,12 +224,62 @@ export default function StoryModeScreen() {
 
         try {
             const currentQuestion = story.questions[currentQuestionIndex];
+
+            // First check the answer correctness
             const result = await unifiedAI.checkStoryAnswer(
                 currentQuestion.question,
                 userAnswer,
                 currentQuestion.correctAnswer,
                 story.story
             );
+
+            // Also evaluate user's English for grammar/spelling (if it's a longer response)
+            if (userAnswer.split(' ').length >= 3) {
+                const evaluation = await unifiedAI.evaluateEnglishText(
+                    userAnswer,
+                    `Answering question: ${currentQuestion.question}`
+                );
+
+                // Save grammar concepts from evaluation
+                for (const concept of evaluation.grammarConcepts) {
+                    try {
+                        await addOrUpdateGrammarConcept({
+                            name: concept.name,
+                            nameRu: concept.nameRu,
+                            description: concept.description,
+                            rule: concept.rule,
+                            examples: JSON.stringify([concept.example]),
+                        });
+                        console.log('[Story] Saved grammar concept:', concept.name);
+                    } catch (e) {
+                        console.error('[Story] Error saving grammar:', e);
+                    }
+                }
+
+                // Save vocabulary suggestions
+                for (const word of evaluation.vocabularySuggestions) {
+                    try {
+                        await addWord({
+                            text: word.word.toLowerCase(),
+                            translation: word.translation,
+                            definition: word.definition,
+                            cefrLevel: word.level || 'B1',
+                            status: 'new',
+                            timesShown: 0,
+                            timesCorrect: 0,
+                            timesWrong: 0,
+                            lastReviewedAt: null,
+                            nextReviewAt: Date.now(),
+                            source: 'lookup',
+                            reviewCount: 0,
+                            masteryScore: 0,
+                        });
+                        console.log('[Story] Saved vocabulary word:', word.word);
+                    } catch (e) {
+                        console.error('[Story] Error saving word:', e);
+                    }
+                }
+            }
 
             setCurrentFeedback(result.feedback);
             setResults(prev => [...prev, result]);

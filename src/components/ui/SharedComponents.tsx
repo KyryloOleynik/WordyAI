@@ -792,6 +792,11 @@ export function ExerciseHeader({ progress, xpEarned, onBack }: ExerciseHeaderPro
 
     return (
         <View style={exerciseHeaderStyles.container}>
+            {onBack && (
+                <Pressable style={exerciseHeaderStyles.backButton} onPress={onBack}>
+                    <Text style={exerciseHeaderStyles.backIcon}>←</Text>
+                </Pressable>
+            )}
             <View style={exerciseHeaderStyles.progressContainer}>
                 <View style={exerciseHeaderStyles.progressTrack}>
                     <Animated.View style={[exerciseHeaderStyles.progressBar, { width: progressWidth }]} />
@@ -1598,5 +1603,179 @@ const errorPlateStyles = StyleSheet.create({
     },
     savedText: {
         color: colors.accent.green,
+    },
+});
+
+// ============= UNIFIED FEEDBACK MODAL =============
+
+interface UnifiedFeedbackModalProps {
+    visible: boolean;
+    type: 'success' | 'error' | 'info' | 'warning';
+    title: string;
+    message: string;
+    primaryAction?: {
+        label: string;
+        onPress: () => void;
+    };
+    secondaryAction?: {
+        label: string;
+        onPress: () => void;
+    };
+    onClose: () => void;
+}
+
+export function UnifiedFeedbackModal({
+    visible,
+    type,
+    title,
+    message,
+    primaryAction,
+    secondaryAction,
+    onClose
+}: UnifiedFeedbackModalProps) {
+    const scaleAnim = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        if (visible) {
+            scaleAnim.setValue(0);
+            Animated.spring(scaleAnim, {
+                toValue: 1,
+                tension: 60,
+                friction: 7,
+                useNativeDriver: true
+            }).start();
+        }
+    }, [visible]);
+
+    if (!visible) return null;
+
+    const getIcon = () => {
+        switch (type) {
+            case 'success': return '🎉';
+            case 'error': return '⚠️';
+            case 'warning': return '⚡';
+            default: return 'ℹ️';
+        }
+    };
+
+    const getColor = () => {
+        switch (type) {
+            case 'success': return colors.accent.green;
+            case 'error': return colors.accent.red;
+            case 'warning': return colors.accent.amber;
+            default: return colors.primary[300];
+        }
+    };
+
+    return (
+        <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
+            <Pressable style={feedbackStyles.overlay} onPress={onClose}>
+                <Pressable onPress={e => e.stopPropagation()}>
+                    <Animated.View style={[
+                        feedbackStyles.container,
+                        { transform: [{ scale: scaleAnim }] }
+                    ]}>
+                        <View style={[feedbackStyles.iconContainer, { backgroundColor: `${getColor()}20` }]}>
+                            <Text style={feedbackStyles.icon}>{getIcon()}</Text>
+                        </View>
+
+                        <Text style={feedbackStyles.title}>{title}</Text>
+                        <Text style={feedbackStyles.message}>{message}</Text>
+
+                        <View style={feedbackStyles.actions}>
+                            {secondaryAction && (
+                                <Pressable
+                                    style={[feedbackStyles.button, feedbackStyles.secondaryButton]}
+                                    onPress={secondaryAction.onPress}
+                                >
+                                    <Text style={feedbackStyles.secondaryButtonText}>{secondaryAction.label}</Text>
+                                </Pressable>
+                            )}
+                            <Pressable
+                                style={[feedbackStyles.button, feedbackStyles.primaryButton, { backgroundColor: getColor() }]}
+                                onPress={primaryAction ? primaryAction.onPress : onClose}
+                            >
+                                <Text style={feedbackStyles.primaryButtonText}>
+                                    {primaryAction ? primaryAction.label : 'OK'}
+                                </Text>
+                            </Pressable>
+                        </View>
+                    </Animated.View>
+                </Pressable>
+            </Pressable>
+        </Modal>
+    );
+}
+
+const feedbackStyles = StyleSheet.create({
+    overlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: spacing.xl,
+    },
+    container: {
+        backgroundColor: colors.surface,
+        borderRadius: borderRadius.xl,
+        padding: spacing.xl,
+        width: '100%',
+        maxWidth: 340,
+        alignItems: 'center',
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 10,
+    },
+    iconContainer: {
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: spacing.lg,
+    },
+    icon: {
+        fontSize: 32,
+    },
+    title: {
+        ...typography.h2,
+        color: colors.text.primary,
+        marginBottom: spacing.sm,
+        textAlign: 'center',
+    },
+    message: {
+        ...typography.body,
+        color: colors.text.secondary,
+        textAlign: 'center',
+        marginBottom: spacing.xl,
+        lineHeight: 22,
+    },
+    actions: {
+        flexDirection: 'row',
+        gap: spacing.md,
+        width: '100%',
+    },
+    button: {
+        flex: 1,
+        paddingVertical: spacing.md,
+        borderRadius: borderRadius.lg,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    secondaryButton: {
+        backgroundColor: colors.surfaceElevated,
+    },
+    primaryButton: {
+        // bg color set dynamically
+    },
+    secondaryButtonText: {
+        ...typography.bodyBold,
+        color: colors.text.primary,
+    },
+    primaryButtonText: {
+        ...typography.bodyBold,
+        color: colors.text.inverse,
     },
 });
