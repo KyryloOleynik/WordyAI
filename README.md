@@ -1,96 +1,87 @@
-# WordyAI
+# WordyAI 🧠✨
 
-AI-powered language learning app for Russian speakers learning English.
+**Master English with AI-Powered Immersion**
 
-## About
+> A next-generation language learning application for Russian speakers, combining advanced AI, volumetric design, and gamified practice to make learning English intuitive and engaging.
 
-WordyAI is a language learning application that uses on-device AI to provide personalized learning experiences. The app runs Gemma 2 2B locally, so most features work without an internet connection.
+![App Banner Placeholder](https://via.placeholder.com/1200x500.png?text=WordyAI+Showcase)
 
-The main focus is on vocabulary building through various interactive modes, with automatic word difficulty classification and spaced repetition for optimal retention.
+## 🌟 Why WordyAI?
 
-## Features
+WordyAI isn't just another flashcard app. It utilizes **Unified AI Technology** (integrating Google Gemini and Perplexity) to create a personalized tutor that understands context, corrects grammar, and facilitates immersive conversations.
 
-### Learning Modes
+Built with **React Native (Expo)** and the **Volumetric Design System**, it offers a premium, tactile user experience that feels alive.
 
-- **Chat Mode** - Practice conversations with an AI teacher that corrects grammar and spelling mistakes in real-time
-- **Story Mode** - Read AI-generated stories with comprehension questions matched to your CEFR level
-- **Translation Mode** - Translate Russian sentences to English and get detailed feedback
-- **Matching Mode** - Connect English words with their translations or definitions
-- **Practice Mode** - Flashcard-based review with spaced repetition scheduling
+## 🚀 Key Features
 
-### Core Functionality
+### 🤖 Intelligent Learning Modes
+- **Chat Mode**: Have natural voice or text conversations with an AI tutor. Get real-time corrections on your grammar and spelling.
+- **Story Mode**: Read AI-generated stories tailored to your proficiency level (A1-C2). Tap any word to translate instantly and answer comprehension questions.
+- **Translation Mode**: Practice sentence construction. Translate Russian sentences to English and receive detailed feedback on your accuracy and style.
+- **YouTube Ingestion**: Import your favorite YouTube videos. The app extracts subtitles, identifies new vocabulary, and creates personalized lessons.
 
-- Automatic CEFR level classification for every word (A1 to C2)
-- Personal dictionary built from YouTube videos, stories, or manual input
-- Words you get wrong are automatically added for extra practice
-- XP system, daily streaks, and level progression for motivation
+### 🎮 Gamification & Progress
+- **Matching Game**: Race against the clock to match words with meanings or definitions.
+- **XP & Streaks**: Earn experience points for every correct interaction. Keep your daily streak alive to build a learning habit.
+- **Mastery System**: Track your progress for every single word. Words move from "New" to "Learning" to "Known" based on spaced repetition (SM-2 Algorithm).
 
-## Tech Stack
+### 🎨 Volumetric Design System
+- **Tactile UI**: Buttons and cards practically pop off the screen with 3D-inspired styling.
+- **Dynamic Animations**: Smooth transitions, haptic feedback, and fluid gestures.
+- **Adaptive Aesthetics**: Beautiful dark mode support with vibrant accent colors.
 
-### Frontend
+## 🛠️ Tech Stack
 
-- React Native
-- Expo SDK 54
-- TypeScript
-- React Navigation 7
+**Frontend:**
+- **Framework**: React Native (Expo SDK 54)
+- **Language**: TypeScript
+- **State/Props**: React Hooks, Context API
+- **Navigation**: React Navigation 7
+- **Styling**: StyleSheet + Volumetric Design System
 
-### AI and NLP
+**AI & Backend Services:**
+- **Unified AI Manager**: Abstraction layer integrating Google Gemini and Perplexity APIs.
+- **Speech**: `expo-speech` for Text-to-Speech (TTS).
+- **Database**: `expo-sqlite` for offline-first persistent storage.
 
-- Gemma 2 2B (on-device LLM)
-- @mlc-ai/web-llm for web inference
-- llama.rn for native mobile inference
-- Datamuse API for word frequency data
+**Tools:**
+- **Build System**: EAS (Expo Application Services)
+- **Code Quality**: ESLint, Prettier
 
-### Data and Storage
+## 📲 Installation
 
-- AsyncStorage for persistent local storage
-- WatermelonDB for local database
-- SM-2 algorithm for spaced repetition
+1.  **Clone the repository**
+    ```bash
+    git clone https://github.com/KyryloOleynik/WordyAI.git
+    cd WordyAI
+    ```
 
-### External APIs
+2.  **Install dependencies**
+    ```bash
+    npm install
+    ```
 
-- Free Dictionary API for definitions
-- MyMemory API for translations
-- Expo Speech for pronunciation
+3.  **Start the development server**
+    ```bash
+    npx expo start
+    ```
 
-## Installation
+4.  **Run on Device**
+    - **Android**: Scan the QR code with Expo Go or run `npx expo run:android`
+    - **iOS**: Scan the QR code with Expo Go or run `npx expo run:ios` (Mac only)
 
-Requirements:
-- Node.js 18 or higher
-- npm or yarn
-- Expo CLI
+## 🔑 Configuration
 
-```bash
-git clone https://github.com/yourusername/wordyai.git
-cd wordyai
-npm install
-npx expo start
-```
+To unlock the full potential of AI features, add your API keys in the app settings:
 
-### Running on Different Platforms
+- **Google Gemini API Key**: For chat, stories, and image analysis.
+- **Perplexity API Key**: For enhanced context and alternative explanations.
 
-```bash
-# Web
-npx expo start --web
+> Note: The app includes a limited offline mode, but AI features require an internet connection and valid keys.
 
-# Android
-npx expo run:android
+## 📱 Build for Android
 
-# iOS (macOS only)
-npx expo run:ios
-```
-
-## Building for Production
-
-### Web
-
-```bash
-npx expo export --platform web
-```
-
-This creates a `dist` folder that can be deployed to any static hosting.
-
-### Mobile
+To generate an APK for your Android device:
 
 ```bash
 npm install -g eas-cli
@@ -98,26 +89,10 @@ eas login
 eas build -p android --profile preview
 ```
 
-## Project Structure
+## 🤝 Contributing
 
-```
-src/
-  components/ui/     Reusable UI components
-  screens/           App screens
-  services/          Business logic and API integrations
-  lib/design/        Design system tokens
-  lib/nlp/           NLP utilities
-  navigation/        React Navigation setup
-```
+Contributions are welcome! Please feel free to submit a Pull Request.
 
-## Configuration
+## 📄 License
 
-Optional environment variables:
-
-```
-GOOGLE_AI_API_KEY=your_gemini_api_key
-```
-
-## License
-
-MIT
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
