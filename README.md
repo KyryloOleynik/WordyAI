@@ -46,7 +46,7 @@ Built with **React Native (Expo)** and the **Volumetric Design System**, it offe
 - **Build System**: EAS (Expo Application Services)
 - **Code Quality**: ESLint, Prettier
 
-## 📲 Installation
+## Installation
 
 1.  **Clone the repository**
     ```bash
