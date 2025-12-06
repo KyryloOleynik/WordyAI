@@ -4,8 +4,6 @@
 
 > A next-generation language learning application for Russian speakers, combining advanced AI, volumetric design, and gamified practice to make learning English intuitive and engaging.
 
-![App Banner Placeholder](https://via.placeholder.com/1200x500.png?text=WordyAI+Showcase)
-
 ## Why WordyAI?
 
 WordyAI isn't just another flashcard app. It utilizes **Unified AI Technology** (integrating Google Gemini and Perplexity) to create a personalized tutor that understands context, corrects grammar, and facilitates immersive conversations.
