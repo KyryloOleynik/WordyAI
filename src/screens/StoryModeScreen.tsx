@@ -372,6 +372,14 @@ export default function StoryModeScreen() {
                         </Pressable>
                     ))}
                 </View>
+                <UnifiedFeedbackModal
+                    visible={feedbackModal.visible}
+                    type={feedbackModal.type}
+                    title={feedbackModal.title}
+                    message={feedbackModal.message}
+                    primaryAction={feedbackModal.primaryAction}
+                    onClose={() => setFeedbackModal(prev => ({ ...prev, visible: false }))}
+                />
             </View>
         );
     }
@@ -469,6 +477,14 @@ export default function StoryModeScreen() {
                         </Pressable>
                     </Pressable>
                 </Modal>
+                <UnifiedFeedbackModal
+                    visible={feedbackModal.visible}
+                    type={feedbackModal.type}
+                    title={feedbackModal.title}
+                    message={feedbackModal.message}
+                    primaryAction={feedbackModal.primaryAction}
+                    onClose={() => setFeedbackModal(prev => ({ ...prev, visible: false }))}
+                />
             </View>
         );
     }
@@ -557,18 +573,20 @@ export default function StoryModeScreen() {
         }, []);
 
         return (
-            <CompletionScreen
-                score={correctCount}
-                total={totalQuestions}
-                xpEarned={xpEarned}
-                newWordsCount={addedWords.size}
-                onRestart={restart}
-                onHome={() => navigation.goBack()}
-                title="История прочитана!"
-                message={percentage >= 70
-                    ? 'Отлично! Вы хорошо поняли историю!'
-                    : 'Продолжайте читать и практиковаться!'}
-            />
+            <>
+                <CompletionScreen
+                    score={correctCount}
+                    total={totalQuestions}
+                    xpEarned={xpEarned}
+                    newWordsCount={addedWords.size}
+                    onRestart={restart}
+                    onHome={() => navigation.goBack()}
+                    title="История прочитана!"
+                    message={percentage >= 70
+                        ? 'Отлично! Вы хорошо поняли историю!'
+                        : 'Продолжайте читать и практиковаться!'}
+                />
+            </>
         );
     }
 

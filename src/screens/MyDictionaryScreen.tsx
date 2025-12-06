@@ -118,8 +118,25 @@ Output JSON only: {"translation": "русский перевод", "definition":
                 await loadData();
                 console.log('[loadTranslation] loadData completed');
             }
-        } catch (e) {
+        } catch (e: any) {
             console.error('Failed to load translation:', e);
+            if (e.name === 'ApiKeyError') {
+                setFeedbackModal({
+                    visible: true,
+                    type: 'warning',
+                    title: 'Ошибка ключа API',
+                    message: 'Для перевода нужен API ключ.',
+                    primaryAction: {
+                        label: 'Настройки',
+                        onPress: () => {
+                            setFeedbackModal(prev => ({ ...prev, visible: false }));
+                            navigation.navigate('Settings' as never);
+                        }
+                    }
+                });
+            } else {
+                showToast('Не удалось загрузить перевод', 'error');
+            }
         } finally {
             setIsLoadingTranslation(false);
         }
@@ -171,9 +188,27 @@ Output JSON only: {"translation": "русский перевод", "definition":
 
             await loadData();
             showToast(`✅ Добавлено ${extracted.length} слов из фото`, 'success');
-        } catch (error) {
+            await loadData();
+            showToast(`✅ Добавлено ${extracted.length} слов из фото`, 'success');
+        } catch (error: any) {
             console.error('Photo scan error:', error);
-            showToast('Не удалось обработать фото', 'error');
+            if (error.name === 'ApiKeyError') {
+                setFeedbackModal({
+                    visible: true,
+                    type: 'warning',
+                    title: 'Ошибка ключа API',
+                    message: 'Для распознавания фото нужен API ключ.',
+                    primaryAction: {
+                        label: 'Настройки',
+                        onPress: () => {
+                            setFeedbackModal(prev => ({ ...prev, visible: false }));
+                            navigation.navigate('Settings' as never);
+                        }
+                    }
+                });
+            } else {
+                showToast('Не удалось обработать фото', 'error');
+            }
         } finally {
             setIsScanning(false);
         }
@@ -690,6 +725,14 @@ Output JSON only: {"translation": "русский перевод", "definition":
                     <Text style={styles.toastText}>{toast.message}</Text>
                 </Animated.View>
             )}
+            <UnifiedFeedbackModal
+                visible={feedbackModal.visible}
+                type={feedbackModal.type}
+                title={feedbackModal.title}
+                message={feedbackModal.message}
+                primaryAction={feedbackModal.primaryAction}
+                onClose={() => setFeedbackModal(prev => ({ ...prev, visible: false }))}
+            />
         </View>
     );
 }

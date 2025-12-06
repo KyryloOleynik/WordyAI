@@ -7,7 +7,7 @@ import { addXP, XP_REWARDS } from '@/services/storageService';
 import { unifiedAI, ApiKeyError } from '@/services/unifiedAIManager';
 import { getWordsForPractice, updateWordMetrics, DictionaryWord } from '@/services/database';
 import { analyzeGrammarErrors, GrammarError } from '@/services/grammarDetectionService';
-import { saveAIResult } from '@/services/aiResponseParser';
+import { saveAIResult, cleanMarkupFromText } from '@/services/aiResponseParser';
 import TappableText from '@/components/ui/TappableText';
 
 const LEVELS = [
@@ -203,8 +203,7 @@ export default function TranslationModeScreen() {
             }
 
             // Process feedback text to extract and save any markup (grammar/words)
-            const parseResult = await processAIResponse(evaluationResult.feedback, 'translation');
-            const cleanedFeedback = parseResult.cleanedText;
+            const cleanedFeedback = cleanMarkupFromText(evaluationResult.feedback);
 
             const finalResult: TranslationResult = {
                 isCorrect,
@@ -250,7 +249,7 @@ export default function TranslationModeScreen() {
                         label: 'Настройки',
                         onPress: () => {
                             setFeedbackModal(prev => ({ ...prev, visible: false }));
-                            navigation.navigate('Settings');
+                            navigation.navigate('Settings' as never);
                         }
                     }
                 });
