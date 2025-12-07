@@ -18,6 +18,7 @@
     "expo-file-system": "^19.0.19",
     "expo-image-picker": "~17.0.9",
     "expo-linear-gradient": "~15.0.8",
+    "expo-network": "^8.0.8",
     "expo-speech": "~14.0.8",
     "expo-sqlite": "~16.0.10",
     "expo-status-bar": "~3.0.9",

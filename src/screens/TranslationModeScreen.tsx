@@ -3,14 +3,24 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
 import { VButton, StyledInput } from '@/components/ui/DesignSystem';
-import { CompletionScreen, UnifiedFeedbackModal, ScreenContainer, LoadingIndicator, getApiKeyErrorConfig } from '@/components/ui/SharedComponents';
-import { addXP, XP_REWARDS } from '@/services/storageService';
-import { unifiedAI, ApiKeyError } from '@/services/unifiedAIManager';
+import { CompletionScreen, UnifiedFeedbackModal, ScreenContainer, LoadingOverlay, getApiKeyErrorConfig, WordInfoModal } from '@/components/ui/SharedComponents';
 import { getWordsForPractice, updateWordMetrics, DictionaryWord } from '@/services/database';
-import { analyzeGrammarErrors, GrammarError } from '@/services/grammarDetectionService';
-import { saveAIResult, cleanMarkupFromText } from '@/services/aiResponseParser';
-import TappableText from '@/components/ui/TappableText';
 import { LEVELS } from '@/constants/common';
+import { translateWord } from '@/services/translationService';
+import { addWord } from '@/services/storageService';
+import { unifiedAI, ApiKeyError } from '@/services/unifiedAIManager';
+import { addXP, XP_REWARDS, getSettings } from '@/services/storageService';
+import { cleanMarkupFromText, saveAIResult } from '@/services/aiResponseParser';
+
+import TappableText from '@/components/ui/TappableText';
+
+interface GrammarError {
+    pattern: string;
+    patternRu?: string;
+    description: string;
+    example: string;
+    userMistake: string;
+}
 
 interface TranslationResult {
     isCorrect: boolean;
@@ -19,6 +29,14 @@ interface TranslationResult {
     suggestedTranslation: string;
     errors: string[];
     grammarErrors?: GrammarError[];
+}
+
+interface WordLookupData {
+    word: string;
+    definition: string;
+    translation: string;
+    cefrLevel: string;
+    isLoading: boolean;
 }
 
 // Parsing functions moved to @/services/aiResponseParser.ts
@@ -52,8 +70,14 @@ export default function TranslationModeScreen() {
     });
     const [aiStatus, setAiStatus] = useState<string>('Проверка AI...');
     const [vocabWords, setVocabWords] = useState<DictionaryWord[]>([]);
-    const [currentWordId, setCurrentWordId] = useState<string | null>(null);
+    const [currentWordIds, setCurrentWordIds] = useState<string[]>([]);
     const [grammarErrors, setGrammarErrors] = useState<GrammarError[]>([]);
+
+    // Word lookup state
+    const [wordLookup, setWordLookup] = useState<WordLookupData | null>(null);
+    const [showWordModal, setShowWordModal] = useState(false);
+    const [addedWords, setAddedWords] = useState<Set<string>>(new Set());
+
     const progressAnim = useRef(new Animated.Value(0)).current;
 
     const progressWidth = progressAnim.interpolate({
@@ -89,9 +113,9 @@ export default function TranslationModeScreen() {
 
     const checkAIStatus = async () => {
         const status = await unifiedAI.getStatus();
-        if (status.activeBackend === 'google') {
+        if (status.google.available) {
             setAiStatus('Google AI');
-        } else if (status.activeBackend === 'perplexity') {
+        } else if (status.perplexity.available) {
             setAiStatus('Perplexity AI');
         } else {
             setAiStatus('AI недоступен');
@@ -107,7 +131,7 @@ export default function TranslationModeScreen() {
         setResult(null);
         setUserTranslation('');
         setSentenceHint(null);
-        setCurrentWordId(null);
+        setCurrentWordIds([]);
         setIsGenerating(true);
         setStep('exercise');
 
@@ -125,11 +149,11 @@ export default function TranslationModeScreen() {
 
                 // Track word if it was used
                 if (targetWords.length > 0) {
-                    const usedWord = vocabWords.find(w =>
+                    const usedWords = vocabWords.filter(w =>
                         generated.expectedTranslation.toLowerCase().includes(w.text.toLowerCase())
                     );
-                    if (usedWord) {
-                        setCurrentWordId(usedWord.id);
+                    if (usedWords.length > 0) {
+                        setCurrentWordIds(usedWords.map(w => w.id));
                     }
                 }
             }
@@ -156,40 +180,37 @@ export default function TranslationModeScreen() {
 
         try {
             // Use unified AI manager for evaluation
-            const evaluationResult = await unifiedAI.evaluateTranslation(
-                russianSentence,
-                userTranslation,
-                expectedTranslation
-            );
+            const evaluationResult = await unifiedAI.evaluate({
+                type: 'translation',
+                original: russianSentence,
+                user: userTranslation,
+                expected: expectedTranslation
+            });
 
-            const isCorrect = evaluationResult.accuracy >= 70;
+            const isCorrect = (evaluationResult.accuracy || 0) >= 70;
 
-            // Analyze grammar errors if incorrect
+            // Map corrections to grammar errors
             let detectedGrammarErrors: GrammarError[] = [];
-            if (!isCorrect) {
-                try {
-                    detectedGrammarErrors = await analyzeGrammarErrors(
-                        russianSentence,
-                        userTranslation,
-                        expectedTranslation
-                    );
-                    setGrammarErrors(detectedGrammarErrors);
-                } catch (e) {
-                    console.log('Grammar analysis failed:', e);
-                }
-            } else {
-                setGrammarErrors([]);
+            if (!isCorrect && evaluationResult.corrections) {
+                detectedGrammarErrors = evaluationResult.corrections.map(c => ({
+                    pattern: c.type === 'grammar' ? 'Grammar Error' : 'Spelling Error',
+                    patternRu: c.type === 'grammar' ? 'Грамматическая ошибка' : 'Орфографическая ошибка',
+                    description: 'Ошибка в написании или грамматике',
+                    example: c.correct,
+                    userMistake: c.wrong
+                }));
             }
+            setGrammarErrors(detectedGrammarErrors);
 
             // Process feedback text to extract and save any markup (grammar/words)
             const cleanedFeedback = cleanMarkupFromText(evaluationResult.feedback);
 
             const finalResult: TranslationResult = {
                 isCorrect,
-                accuracy: evaluationResult.accuracy,
+                accuracy: evaluationResult.accuracy ?? 0,
                 feedback: cleanedFeedback,
                 suggestedTranslation: expectedTranslation,
-                errors: evaluationResult.errors,
+                errors: evaluationResult.errors ?? [],
                 grammarErrors: detectedGrammarErrors,
             };
 
@@ -204,9 +225,11 @@ export default function TranslationModeScreen() {
                 vocabularySuggestions: []
             });
 
-            // Update word metrics if a vocabulary word was used
-            if (currentWordId) {
-                await updateWordMetrics(currentWordId, 'translation', isCorrect);
+            // Update word metrics if vocabulary words were used
+            if (currentWordIds.length > 0) {
+                await Promise.all(currentWordIds.map(id =>
+                    updateWordMetrics(id, 'translation', isCorrect)
+                ));
             }
 
             // Award XP based on accuracy
@@ -273,6 +296,67 @@ export default function TranslationModeScreen() {
         setResult(null);
         setExerciseCount(0);
         setTotalXP(0);
+        setAddedWords(new Set());
+    };
+
+    const handleWordTap = async (word: string) => {
+        const cleanWord = word.replace(/[^a-zA-Zа-яА-Я'-]/g, '').toLowerCase();
+        if (!cleanWord || cleanWord.length < 2) return;
+
+        setWordLookup({ word: cleanWord, definition: '', translation: '', cefrLevel: '', isLoading: true });
+        setShowWordModal(true);
+
+        try {
+            // Use fast API translation instead of LLM
+            const result = await translateWord(cleanWord);
+            if (result) {
+                setWordLookup({
+                    word: cleanWord,
+                    definition: result.definition || 'Definition not found',
+                    translation: result.translation || 'Перевод не найден',
+                    cefrLevel: result.cefrLevel || 'B1',
+                    isLoading: false,
+                });
+            } else {
+                setWordLookup({
+                    word: cleanWord,
+                    definition: 'Could not look up word',
+                    translation: 'Не удалось найти перевод',
+                    cefrLevel: 'B1',
+                    isLoading: false,
+                });
+            }
+        } catch (error) {
+            setWordLookup({
+                word: cleanWord,
+                definition: 'Error looking up word',
+                translation: 'Ошибка поиска',
+                cefrLevel: 'B1',
+                isLoading: false,
+            });
+        }
+    };
+
+    const addWordToDictionary = async () => {
+        if (wordLookup && !addedWords.has(wordLookup.word)) {
+            await addWord({
+                text: wordLookup.word,
+                definition: wordLookup.definition,
+                translation: wordLookup.translation,
+                cefrLevel: wordLookup.cefrLevel,
+                status: 'new',
+                timesShown: 0,
+                timesCorrect: 0,
+                timesWrong: 0,
+                lastReviewedAt: null,
+                nextReviewAt: Date.now(),
+                source: 'lookup',
+                reviewCount: 0,
+                masteryScore: 0,
+            });
+            setAddedWords(prev => new Set([...prev, wordLookup.word]));
+        }
+        setShowWordModal(false);
     };
 
     // Level Selection
@@ -327,46 +411,63 @@ export default function TranslationModeScreen() {
                 </View>
 
                 <ScrollView contentContainerStyle={styles.exerciseContent}>
-                    {isGenerating ? (
-                        <LoadingIndicator text="Генерация предложения..." />
-                    ) : (
-                        <>
-                            <View style={styles.sentenceCard}>
-                                <Text style={styles.translateLabel}>Переведите на английский:</Text>
-                                <Text style={styles.originalSentence}>{russianSentence}</Text>
-                                {sentenceHint && (
-                                    <Text style={styles.hintText}>💡 {sentenceHint}</Text>
-                                )}
+                    <>
+                        <View style={styles.sentenceCard}>
+                            <Text style={styles.translateLabel}>Переведите на английский:</Text>
+                            <View style={styles.sentenceContainer}>
+                                {russianSentence.split(/(\s+)/).map((word, index) => {
+                                    const isSpace = /^\s+$/.test(word);
+                                    if (isSpace) return <Text key={index}> </Text>;
+
+                                    const wordOnly = word.replace(/[^\wа-яА-Я'-]+$/, '');
+                                    const punctuation = word.match(/[^\wа-яА-Я'-]+$/)?.[0] || '';
+
+                                    return (
+                                        <Text key={index}>
+                                            <Text
+                                                style={styles.tappableWord}
+                                                onPress={() => handleWordTap(wordOnly)}
+                                            >
+                                                {wordOnly}
+                                            </Text>
+                                            {punctuation}
+                                        </Text>
+                                    );
+                                })}
                             </View>
+                            {sentenceHint && (
+                                <Text style={styles.hintText}>💡 {sentenceHint}</Text>
+                            )}
+                        </View>
 
-                            <View style={styles.inputContainer}>
-                                <StyledInput
-                                    style={styles.translationInput}
-                                    value={userTranslation}
-                                    onChangeText={setUserTranslation}
-                                    placeholder="Type your English translation..."
-                                    multiline
-                                />
-                            </View>
+                        <View style={styles.inputContainer}>
+                            <StyledInput
+                                style={styles.translationInput}
+                                value={userTranslation}
+                                onChangeText={setUserTranslation}
+                                placeholder="Type your English translation..."
+                                multiline
+                            />
+                        </View>
 
 
-                            <View style={styles.buttonRow}>
+                        <View style={styles.buttonRow}>
+                            <VButton
+                                title="Пропустить"
+                                onPress={nextExercise}
+                            />
+                            <View style={{ flex: 1 }}>
                                 <VButton
-                                    title="Пропустить"
-                                    onPress={nextExercise}
+                                    title="Проверить"
+                                    variant="success"
+                                    onPress={submitTranslation}
+                                    disabled={!userTranslation.trim() || isLoading}
+                                    loading={isLoading}
                                 />
-                                <View style={{ flex: 1 }}>
-                                    <VButton
-                                        title="Проверить"
-                                        variant="success"
-                                        onPress={submitTranslation}
-                                        disabled={!userTranslation.trim() || isLoading}
-                                        loading={isLoading}
-                                    />
-                                </View>
                             </View>
-                        </>
-                    )}
+                        </View>
+                    </>
+
                 </ScrollView>
 
                 {/* Progress Bar matching MatchingMode */}
@@ -389,6 +490,30 @@ export default function TranslationModeScreen() {
                     message={feedbackModal.message}
                     primaryAction={feedbackModal.primaryAction}
                     onClose={() => setFeedbackModal(prev => ({ ...prev, visible: false }))}
+                />
+
+                {wordLookup && (
+                    <WordInfoModal
+                        visible={showWordModal}
+                        word={wordLookup.word}
+                        translation={wordLookup.translation}
+                        definition={wordLookup.definition}
+                        cefrLevel={wordLookup.cefrLevel}
+                        onClose={() => setShowWordModal(false)}
+                    >
+                        {!addedWords.has(wordLookup.word) ? (
+                            <Pressable style={styles.addWordButton} onPress={addWordToDictionary}>
+                                <Text style={styles.addWordButtonText}>+ Добавить в словарь</Text>
+                            </Pressable>
+                        ) : (
+                            <Text style={styles.alreadyAdded}>✓ Добавлено в словарь</Text>
+                        )}
+                    </WordInfoModal>
+                )}
+
+                <LoadingOverlay
+                    visible={isGenerating || isLoading}
+                    text={isGenerating ? "Генерация задания..." : "Проверка перевода..."}
                 />
             </ScreenContainer>
         );
@@ -621,6 +746,33 @@ const styles = StyleSheet.create({
         ...typography.h3,
         color: colors.text.primary,
         lineHeight: 32,
+    },
+    sentenceContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+    },
+    tappableWord: {
+        ...typography.h3,
+        color: colors.text.primary,
+        lineHeight: 32,
+        textDecorationLine: 'underline',
+        textDecorationStyle: 'dotted',
+        textDecorationColor: 'rgba(255, 255, 255, 0.3)',
+    },
+    addWordButton: {
+        backgroundColor: colors.primary[300],
+        borderRadius: borderRadius.lg,
+        paddingVertical: spacing.md,
+        alignItems: 'center',
+    },
+    addWordButtonText: {
+        ...typography.bodyBold,
+        color: colors.text.inverse,
+    },
+    alreadyAdded: {
+        ...typography.body,
+        color: colors.accent.green,
+        textAlign: 'center',
     },
     hintText: {
         ...typography.bodySmall,

@@ -1,11 +1,11 @@
-import { StyleSheet, Text, View, ScrollView, Pressable, TextInput, Modal, ActivityIndicator, FlatList, Animated } from 'react-native';
+import { StyleSheet, Text, View, ScrollView, Pressable, TextInput, FlatList, Animated, ActivityIndicator } from 'react-native';
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
 import * as ImagePicker from 'expo-image-picker';
 import { useSpeech } from '@/hooks/useSpeech';
 import { unifiedAI, ApiKeyError } from '@/services/unifiedAIManager';
-import { UnifiedFeedbackModal } from '@/components/ui/SharedComponents';
+import { UnifiedFeedbackModal, InputModal, LoadingOverlay, EmptyState, WordInfoModal } from '@/components/ui/SharedComponents';
 import {
     getAllWords,
     addWord,
@@ -464,14 +464,12 @@ Output JSON only: {"translation": "русский перевод", "definition":
 
                     {/* Words List */}
                     {filteredWords.length === 0 ? (
-                        <View style={styles.emptyContainer}>
-                            <Text style={styles.emptyIcon}>📚</Text>
-                            <Text style={styles.emptyText}>
-                                {words.length === 0
-                                    ? 'Словарь пуст. Добавьте слова!'
-                                    : 'Нет слов по фильтру'}
-                            </Text>
-                        </View>
+                        <EmptyState
+                            icon="📚"
+                            message={words.length === 0
+                                ? 'Словарь пуст. Добавьте слова!'
+                                : 'Нет слов по фильтру'}
+                        />
                     ) : (
                         <FlatList
                             data={filteredWords}
@@ -485,13 +483,11 @@ Output JSON only: {"translation": "русский перевод", "definition":
             ) : (
                 /* Grammar Concepts List */
                 grammarConcepts.length === 0 ? (
-                    <View style={styles.emptyContainer}>
-                        <Text style={styles.emptyIcon}>📖</Text>
-                        <Text style={styles.emptyTitle}>Нет грамматических тем</Text>
-                        <Text style={styles.emptyText}>
-                            Грамматика добавляется автоматически при изучении уроков
-                        </Text>
-                    </View>
+                    <EmptyState
+                        icon="📖"
+                        title="Нет грамматических тем"
+                        message="Грамматика добавляется автоматически при изучении уроков"
+                    />
                 ) : (
                     <FlatList
                         data={grammarConcepts}
@@ -545,160 +541,105 @@ Output JSON only: {"translation": "русский перевод", "definition":
             </Pressable>
 
             {/* Add Word Modal */}
-            <Modal visible={showAddModal} transparent animationType="fade">
-                <Pressable style={styles.modalOverlay} onPress={() => setShowAddModal(false)}>
-                    <Pressable style={styles.modalContent} onPress={e => e.stopPropagation()}>
-                        <Text style={styles.modalTitle}>Добавить слова</Text>
-                        <TextInput
-                            style={[styles.modalInput, { minHeight: 80, textAlignVertical: 'top' }]}
-                            placeholder="apple, banana, orange&#10;или каждое с новой строки"
-                            placeholderTextColor={colors.text.tertiary}
-                            value={newWord}
-                            onChangeText={setNewWord}
-                            autoCapitalize="none"
-                            multiline
-                            numberOfLines={3}
-                        />
-                        <Text style={styles.modalHint}>
-                            Введите слова через запятую или каждое с новой строки.{'\n'}AI автоматически найдёт переводы.
-                        </Text>
-                        <Pressable
-                            style={[styles.modalButton, (!newWord.trim() || isAddingWord) && styles.disabledButton]}
-                            onPress={handleAddWord}
-                            disabled={!newWord.trim() || isAddingWord}
-                        >
-                            {isAddingWord ? (
-                                <ActivityIndicator color={colors.text.inverse} />
-                            ) : (
-                                <Text style={styles.modalButtonText}>
-                                    Добавить{newWord.split(/[,;\n]+/).filter(w => w.trim()).length > 1 ? ` (${newWord.split(/[,;\n]+/).filter(w => w.trim()).length})` : ''}
-                                </Text>
-                            )}
-                        </Pressable>
-                    </Pressable>
-                </Pressable>
-            </Modal>
+            <InputModal
+                visible={showAddModal}
+                title="Добавить слова"
+                value={newWord}
+                onChangeText={setNewWord}
+                placeholder={"apple, banana, orange\nили каждое с новой строки"}
+                confirmLabel={isAddingWord ? "Добавляю..." : `Добавить${newWord.split(/[,;\n]+/).filter(w => w.trim()).length > 1 ? ` (${newWord.split(/[,;\n]+/).filter(w => w.trim()).length})` : ''}`}
+                onConfirm={handleAddWord}
+                onCancel={() => setShowAddModal(false)}
+                loading={isAddingWord}
+                multiline
+                numberOfLines={3}
+            />
 
             {/* Word Detail Modal */}
-            <Modal visible={showDetailModal} transparent animationType="fade">
-                <Pressable style={styles.modalOverlay} onPress={closeDetailModal}>
-                    <Pressable style={styles.detailModalContent} onPress={e => e.stopPropagation()}>
-                        {selectedWord && (
-                            <>
-                                {/* Header with word, pronunciation, CEFR */}
-                                <View style={styles.detailHeader}>
-                                    <View style={styles.detailWordRow}>
-                                        <Text style={styles.detailWord}>{selectedWord.text}</Text>
-                                        <Pressable
-                                            style={[styles.speakButton, isSpeaking && styles.speakButtonActive]}
-                                            onPress={() => handleSpeak(selectedWord.text)}
-                                        >
-                                            <Text style={styles.speakIcon}>{isSpeaking ? '🔊' : '🔈'}</Text>
-                                        </Pressable>
-                                    </View>
-                                    <View style={[styles.detailCefr, { backgroundColor: getCefrColor(selectedWord.cefrLevel) }]}>
-                                        <Text style={styles.detailCefrText}>{selectedWord.cefrLevel}</Text>
-                                    </View>
-                                </View>
+            {selectedWord && (
+                <WordInfoModal
+                    visible={showDetailModal}
+                    word={selectedWord.text}
+                    translation={selectedWord.translation}
+                    definition={selectedWord.definition}
+                    cefrLevel={selectedWord.cefrLevel}
+                    onClose={closeDetailModal}
+                >
+                    {/* Load Translation Button - only if missing */}
+                    {(!selectedWord.translation || !selectedWord.definition) && (
+                        <Pressable
+                            style={[styles.loadTranslationButton, isLoadingTranslation && styles.disabledButton]}
+                            onPress={loadTranslation}
+                            disabled={isLoadingTranslation}
+                        >
+                            {isLoadingTranslation ? (
+                                <ActivityIndicator size="small" color={colors.text.inverse} />
+                            ) : (
+                                <Text style={styles.loadTranslationText}>✨ Подгрузить перевод</Text>
+                            )}
+                        </Pressable>
+                    )}
 
-                                {/* Translation */}
-                                <View style={styles.detailSection}>
-                                    <Text style={styles.detailLabel}>Перевод</Text>
-                                    <Text style={styles.detailTranslation}>{selectedWord.translation || 'Нет перевода'}</Text>
-                                </View>
+                    {/* Stats - Simplified correct/wrong metrics */}
+                    <View style={styles.statsRow}>
+                        <View style={styles.statItem}>
+                            <Text style={styles.statValue}>
+                                {selectedWord.timesShown || 0}
+                            </Text>
+                            <Text style={styles.statLabel}>Повторений</Text>
+                        </View>
+                        <View style={styles.statItem}>
+                            <Text style={styles.statValue}>
+                                {selectedWord.timesCorrect || 0}
+                            </Text>
+                            <Text style={styles.statLabel}>Правильно</Text>
+                        </View>
+                        <View style={styles.statItem}>
+                            <Text style={styles.statValue}>
+                                {selectedWord.timesWrong || 0}
+                            </Text>
+                            <Text style={styles.statLabel}>Неправильно</Text>
+                        </View>
+                    </View>
 
-                                {/* Definition */}
-                                <View style={styles.detailSection}>
-                                    <Text style={styles.detailLabel}>Определение</Text>
-                                    <Text style={styles.detailDefinition}>{selectedWord.definition || 'No definition'}</Text>
-                                </View>
+                    {/* Mastery Progress */}
+                    {selectedWord.masteryScore !== undefined && (
+                        <View style={styles.masteryRow}>
+                            <Text style={styles.masteryLabel}>Усвоение:</Text>
+                            <View style={styles.masteryTrackBig}>
+                                <View style={[styles.masteryFill, { width: `${Math.round((selectedWord.masteryScore || 0) * 100)}%` }]} />
+                            </View>
+                            <Text style={styles.masteryPercent}>{Math.round((selectedWord.masteryScore || 0) * 100)}%</Text>
+                        </View>
+                    )}
 
-                                {/* Load Translation Button - only if missing */}
-                                {(!selectedWord.translation || !selectedWord.definition) && (
-                                    <Pressable
-                                        style={[styles.loadTranslationButton, isLoadingTranslation && styles.disabledButton]}
-                                        onPress={loadTranslation}
-                                        disabled={isLoadingTranslation}
-                                    >
-                                        {isLoadingTranslation ? (
-                                            <ActivityIndicator size="small" color={colors.text.inverse} />
-                                        ) : (
-                                            <Text style={styles.loadTranslationText}>✨ Подгрузить перевод</Text>
-                                        )}
-                                    </Pressable>
-                                )}
+                    {/* Status */}
+                    <View style={styles.statusRow}>
+                        <View style={[styles.statusBadge, { backgroundColor: `${getStatusColor(selectedWord.status)}20` }]}>
+                            <View style={[styles.statusDotLarge, { backgroundColor: getStatusColor(selectedWord.status) }]} />
+                            <Text style={[styles.statusBadgeText, { color: getStatusColor(selectedWord.status) }]}>
+                                {getStatusLabel(selectedWord.status)}
+                            </Text>
+                        </View>
+                    </View>
 
-                                {/* Stats - Simplified correct/wrong metrics */}
-                                <View style={styles.statsRow}>
-                                    <View style={styles.statItem}>
-                                        <Text style={styles.statValue}>
-                                            {selectedWord.timesShown || 0}
-                                        </Text>
-                                        <Text style={styles.statLabel}>Повторений</Text>
-                                    </View>
-                                    <View style={styles.statItem}>
-                                        <Text style={styles.statValue}>
-                                            {selectedWord.timesCorrect || 0}
-                                        </Text>
-                                        <Text style={styles.statLabel}>Правильно</Text>
-                                    </View>
-                                    <View style={styles.statItem}>
-                                        <Text style={styles.statValue}>
-                                            {selectedWord.timesWrong || 0}
-                                        </Text>
-                                        <Text style={styles.statLabel}>Неправильно</Text>
-                                    </View>
-                                </View>
-
-                                {/* Mastery Progress */}
-                                {selectedWord.masteryScore !== undefined && (
-                                    <View style={styles.masteryRow}>
-                                        <Text style={styles.masteryLabel}>Усвоение:</Text>
-                                        <View style={styles.masteryTrackBig}>
-                                            <View style={[styles.masteryFill, { width: `${Math.round((selectedWord.masteryScore || 0) * 100)}%` }]} />
-                                        </View>
-                                        <Text style={styles.masteryPercent}>{Math.round((selectedWord.masteryScore || 0) * 100)}%</Text>
-                                    </View>
-                                )}
-
-                                {/* Status */}
-                                <View style={styles.statusRow}>
-                                    <View style={[styles.statusBadge, { backgroundColor: `${getStatusColor(selectedWord.status)}20` }]}>
-                                        <View style={[styles.statusDotLarge, { backgroundColor: getStatusColor(selectedWord.status) }]} />
-                                        <Text style={[styles.statusBadgeText, { color: getStatusColor(selectedWord.status) }]}>
-                                            {getStatusLabel(selectedWord.status)}
-                                        </Text>
-                                    </View>
-                                </View>
-
-                                {/* Buttons */}
-                                <View style={styles.modalButtons}>
-                                    <Pressable style={styles.closeButton} onPress={closeDetailModal}>
-                                        <Text style={styles.closeButtonText}>Закрыть</Text>
-                                    </Pressable>
-                                    <Pressable
-                                        style={styles.deleteButton}
-                                        onPress={() => handleDeleteWord(selectedWord.id)}
-                                    >
-                                        <Text style={styles.deleteButtonText}>🗑️</Text>
-                                    </Pressable>
-                                </View>
-                            </>
-                        )}
-                    </Pressable>
-                </Pressable>
-            </Modal>
+                    {/* Buttons */}
+                    <View style={styles.modalButtons}>
+                        <Pressable style={styles.closeButton} onPress={closeDetailModal}>
+                            <Text style={styles.closeButtonText}>Закрыть</Text>
+                        </Pressable>
+                        <Pressable
+                            style={styles.deleteButton}
+                            onPress={() => handleDeleteWord(selectedWord.id)}
+                        >
+                            <Text style={styles.deleteButtonText}>🗑️</Text>
+                        </Pressable>
+                    </View>
+                </WordInfoModal>
+            )}
 
             {/* Loading Overlay when scanning */}
-            {isScanning && (
-                <View style={styles.scanningOverlay}>
-                    <View style={styles.scanningContent}>
-                        <ActivityIndicator size="large" color={colors.primary[300]} />
-                        <Text style={styles.scanningText}>Распознавание слов...</Text>
-                        <Text style={styles.scanningSubtext}>Ожидание ответа ИИ</Text>
-                    </View>
-                </View>
-            )}
+            <LoadingOverlay visible={isScanning} text="Распознавание слов..." />
 
             {/* Toast Notification */}
             {toast && (
@@ -828,21 +769,7 @@ const styles = StyleSheet.create({
         ...typography.caption,
         color: colors.text.tertiary,
     },
-    emptyContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: spacing.xxxl,
-    },
-    emptyIcon: {
-        fontSize: 48,
-        marginBottom: spacing.lg,
-    },
-    emptyText: {
-        ...typography.body,
-        color: colors.text.secondary,
-        textAlign: 'center',
-    },
+
     addButton: {
         position: 'absolute',
         bottom: spacing.xl,
@@ -864,74 +791,8 @@ const styles = StyleSheet.create({
         color: colors.text.inverse,
         lineHeight: 36,
     },
-    modalOverlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.8)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: spacing.xl,
-    },
-    modalContent: {
-        backgroundColor: colors.surface,
-        borderRadius: borderRadius.xxl,
-        padding: spacing.xxl,
-        width: '100%',
-        maxWidth: 340,
-    },
-    modalTitle: {
-        ...typography.h2,
-        color: colors.text.primary,
-        marginBottom: spacing.lg,
-        textAlign: 'center',
-    },
-    modalInput: {
-        backgroundColor: colors.surfaceElevated,
-        borderRadius: borderRadius.lg,
-        paddingHorizontal: spacing.lg,
-        paddingVertical: spacing.md,
-        ...typography.body,
-        color: colors.text.primary,
-        marginBottom: spacing.md,
-    },
-    modalHint: {
-        ...typography.caption,
-        color: colors.text.tertiary,
-        textAlign: 'center',
-        marginBottom: spacing.lg,
-    },
-    modalButton: {
-        backgroundColor: colors.primary[300],
-        borderRadius: borderRadius.lg,
-        paddingVertical: spacing.md,
-        alignItems: 'center',
-    },
-    modalButtonText: {
-        ...typography.bodyBold,
-        color: colors.text.inverse,
-    },
     disabledButton: {
         backgroundColor: colors.border.medium,
-    },
-    detailModalContent: {
-        backgroundColor: colors.surface,
-        borderRadius: borderRadius.xxl,
-        padding: spacing.xxl,
-        width: '100%',
-        maxWidth: 360,
-    },
-    detailHeader: {
-        alignItems: 'center',
-        marginBottom: spacing.xl,
-    },
-    detailWordRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: spacing.md,
-        marginBottom: spacing.sm,
-    },
-    detailWord: {
-        ...typography.h1,
-        color: colors.text.primary,
     },
     speakButton: {
         backgroundColor: colors.surfaceElevated,
@@ -946,34 +807,6 @@ const styles = StyleSheet.create({
     },
     speakIcon: {
         fontSize: 24,
-    },
-    detailCefr: {
-        paddingHorizontal: spacing.md,
-        paddingVertical: spacing.xs,
-        borderRadius: borderRadius.md,
-    },
-    detailCefrText: {
-        ...typography.bodySmall,
-        color: colors.text.inverse,
-        fontWeight: '700',
-    },
-    detailSection: {
-        marginBottom: spacing.lg,
-    },
-    detailLabel: {
-        ...typography.caption,
-        color: colors.text.tertiary,
-        marginBottom: spacing.xs,
-        textTransform: 'uppercase',
-    },
-    detailTranslation: {
-        ...typography.h3,
-        color: colors.accent.amber,
-    },
-    detailDefinition: {
-        ...typography.body,
-        color: colors.text.secondary,
-        lineHeight: 22,
     },
     statsRow: {
         flexDirection: 'row',

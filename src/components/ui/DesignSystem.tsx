@@ -142,7 +142,7 @@ export function VButton({
             case 'danger':
                 return { bg: colors.accent.red, border: '#B33A3A', text: colors.text.primary };
             case 'secondary':
-                return { bg: colors.surfaceElevated, text: colors.text.primary };
+                return { bg: colors.surfaceElevated, text: colors.text.primary, border: colors.border.medium };
             case 'ghost':
                 return { bg: 'transparent', border: colors.border.medium, text: colors.text.secondary };
             default:
@@ -199,8 +199,8 @@ export function VButton({
                 style={[
                     styles.vButton,
                     {
-                        backgroundColor: (disabled || loading) ? colors.border.medium : colorConfig.bg,
-                        borderBottomColor: colorConfig.border,
+                        backgroundColor: (disabled || loading) ? colors.border.light : colorConfig.bg,
+                        borderColor: (disabled || loading) ? colors.border.medium : colorConfig.border,
                         paddingVertical: sizeConfig.py,
                         paddingHorizontal: sizeConfig.px,
                     },
@@ -520,7 +520,7 @@ const styles = StyleSheet.create({
         borderWidth: 2,
         borderColor: colors.border.medium,
         paddingHorizontal: spacing.md,
-        height: 56,
+        minHeight: 56,
     },
     vInputIcon: {
         fontSize: 20,

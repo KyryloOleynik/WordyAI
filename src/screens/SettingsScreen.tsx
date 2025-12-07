@@ -229,6 +229,31 @@ export default function SettingsScreen() {
                     ))}
                 </View>
 
+                {/* API Timeout Setting */}
+                <Text style={styles.settingLabel}>Таймаут API ключа</Text>
+                <View style={styles.goalOptions}>
+                    {[5, 10, 30, 60, 360].map(mins => (
+                        <Pressable
+                            key={mins}
+                            style={[
+                                styles.goalOption,
+                                (settings.apiTimeoutMinutes || 5) === mins && styles.goalOptionActive
+                            ]}
+                            onPress={async () => {
+                                const updated = await updateSettings({ apiTimeoutMinutes: mins });
+                                setSettings(updated);
+                            }}
+                        >
+                            <Text style={[
+                                styles.goalText,
+                                (settings.apiTimeoutMinutes || 5) === mins && styles.goalTextActive
+                            ]}>
+                                {mins === 360 ? '6ч' : `${mins}м`}
+                            </Text>
+                        </Pressable>
+                    ))}
+                </View>
+
                 {/* Saved Chat Sessions */}
                 <Text style={styles.sectionTitle}>Сохраненные чаты</Text>
                 {savedSessions.length === 0 ? (
@@ -497,7 +522,7 @@ const styles = StyleSheet.create({
     settingLabel: {
         ...typography.bodyBold,
         color: colors.text.primary,
-        marginBottom: spacing.xs,
+        marginBottom: spacing.lg,
     },
     settingDescription: {
         ...typography.bodySmall,

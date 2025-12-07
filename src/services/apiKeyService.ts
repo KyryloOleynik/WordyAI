@@ -15,7 +15,7 @@ export interface APIKey {
 }
 
 const STORAGE_KEY = '@wordy_api_keys';
-const TIMEOUT_DURATION = 6 * 60 * 60 * 1000; // 6 hours in ms
+const TIMEOUT_DURATION = 5 * 60 * 1000; // 5 minutes in ms
 
 // ============ API Keys Management ============
 
@@ -79,11 +79,12 @@ export async function disableKey(id: string): Promise<void> {
     await updateAPIKey(id, { isEnabled: false });
 }
 
-export async function markKeyFailed(id: string): Promise<void> {
+export async function markKeyFailed(id: string, timeoutDurationMs?: number): Promise<void> {
     const now = Date.now();
+    const duration = timeoutDurationMs || TIMEOUT_DURATION;
     await updateAPIKey(id, {
         lastError: now,
-        timeoutUntil: now + TIMEOUT_DURATION,
+        timeoutUntil: now + duration,
     });
 }
 
@@ -123,4 +124,11 @@ export function getTimeoutRemaining(key: APIKey): number {
     if (!key.timeoutUntil) return 0;
     const remaining = key.timeoutUntil - Date.now();
     return Math.max(0, Math.ceil(remaining / 60000));
+}
+// Custom Error for API Key issues
+export class ApiKeyError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'ApiKeyError';
+    }
 }

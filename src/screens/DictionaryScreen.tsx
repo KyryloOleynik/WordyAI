@@ -30,7 +30,7 @@ export default function DictionaryScreen() {
 
     const checkAIStatus = async () => {
         const status = await unifiedAI.getStatus();
-        setIsReady(status.activeBackend !== 'none');
+        setIsReady(status.google.available || status.perplexity.available);
     };
 
     const lookupWord = async (word: string): Promise<DictionaryEntry | null> => {

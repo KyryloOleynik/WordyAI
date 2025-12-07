@@ -12,6 +12,7 @@ export interface UserSettings {
     theme: 'dark' | 'light';
     cefrLevel: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
     hasSeenOnboarding: boolean;
+    apiTimeoutMinutes: number; // default 5
 }
 
 // User stats
@@ -56,6 +57,7 @@ const DEFAULT_SETTINGS: UserSettings = {
     theme: 'dark',
     cefrLevel: 'B1',
     hasSeenOnboarding: false,
+    apiTimeoutMinutes: 5,
 };
 
 const DEFAULT_STATS: UserStats = {

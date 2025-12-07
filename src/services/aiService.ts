@@ -4,10 +4,31 @@
 
 import {
     getWorkingKey,
+    getActiveKeys,
     markKeyFailed,
     getAllAPIKeys,
     getTimeoutRemaining
 } from './apiKeyService';
+import { getSettings } from './storageService';
+import * as Network from 'expo-network';
+
+/**
+ * Check if network is available
+ */
+async function checkNetworkConnection(): Promise<void> {
+    try {
+        const networkState = await Network.getNetworkStateAsync();
+        if (networkState.isConnected === false || networkState.isInternetReachable === false) {
+            throw new Error('NO_INTERNET_CONNECTION');
+        }
+    } catch (error) {
+        if (error instanceof Error && error.message === 'NO_INTERNET_CONNECTION') {
+            throw error;
+        }
+        // If getting state fails, we assume we might be connected and let the fetch fail naturally
+        console.warn('Failed to check network state:', error);
+    }
+}
 
 // AI Service Response
 export interface AIServiceResponse {
@@ -76,7 +97,7 @@ function notifyStatusChange(status: APIStatus) {
 
 async function* streamGoogleAI(prompt: string, apiKey: string): AsyncGenerator<string> {
     const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse&key=${apiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse&key=${apiKey}`,
         {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -122,17 +143,31 @@ async function* streamGoogleAI(prompt: string, apiKey: string): AsyncGenerator<s
     }
 }
 
-async function callGoogleAI(prompt: string, apiKey: string): Promise<string> {
+async function callGoogleAI(prompt: string, apiKey: string, options?: { jsonMode?: boolean, image?: string }): Promise<string> {
+    const contents: any[] = [{ parts: [] }];
+
+    if (options?.image) {
+        contents[0].parts.push({
+            inline_data: {
+                mime_type: 'image/jpeg',
+                data: options.image.replace(/^data:image\/\w+;base64,/, '')
+            }
+        });
+    }
+
+    contents[0].parts.push({ text: prompt });
+
     const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
         {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }],
+                contents: contents,
                 generationConfig: {
                     temperature: 0.7,
                     maxOutputTokens: 2048,
+                    ...(options?.jsonMode ? { responseMimeType: 'application/json' } : {}),
                 }
             }),
         }
@@ -156,7 +191,7 @@ async function* streamPerplexityAI(prompt: string, apiKey: string): AsyncGenerat
             'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-            model: 'llama-3.1-sonar-small-128k-online',
+            model: 'sonar',
             messages: [{ role: 'user', content: prompt }],
             temperature: 0.7,
             max_tokens: 2048,
@@ -196,7 +231,13 @@ async function* streamPerplexityAI(prompt: string, apiKey: string): AsyncGenerat
     }
 }
 
-async function callPerplexityAI(prompt: string, apiKey: string): Promise<string> {
+async function callPerplexityAI(prompt: string, apiKey: string, options?: { jsonMode?: boolean }): Promise<string> {
+    const messages: any[] = [];
+    if (options?.jsonMode) {
+        messages.push({ role: 'system', content: 'Output valid JSON only.' });
+    }
+    messages.push({ role: 'user', content: prompt });
+
     const response = await fetch('https://api.perplexity.ai/chat/completions', {
         method: 'POST',
         headers: {
@@ -204,8 +245,8 @@ async function callPerplexityAI(prompt: string, apiKey: string): Promise<string>
             'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-            model: 'llama-3.1-sonar-small-128k-online',
-            messages: [{ role: 'user', content: prompt }],
+            model: 'sonar',
+            messages: messages,
             temperature: 0.7,
             max_tokens: 2048,
         }),
@@ -227,33 +268,53 @@ async function callPerplexityAI(prompt: string, apiKey: string): Promise<string>
  */
 export async function getAICompletion(
     prompt: string,
-    options?: { jsonMode?: boolean }
+    options?: { jsonMode?: boolean, image?: string }
 ): Promise<AIServiceResponse> {
+    // Check network first
+    try {
+        await checkNetworkConnection();
+    } catch (error) {
+        if (error instanceof Error && error.message === 'NO_INTERNET_CONNECTION') {
+            return { text: 'Нет соединения с интернетом. Проверьте настройки сети.', source: 'none', success: false };
+        }
+    }
+
+    const settings = await getSettings();
+    const timeoutMs = (settings.apiTimeoutMinutes || 5) * 60 * 1000;
+
     // Try Google first
-    const googleKey = await getWorkingKey('google');
-    if (googleKey) {
+    while (true) {
+        const googleKeys = await getActiveKeys('google');
+        if (googleKeys.length === 0) break;
+
+        const key = googleKeys[0];
         try {
-            console.log('Using Google AI...');
-            const text = await callGoogleAI(prompt, googleKey.key);
+            console.log(`Using Google AI (Key: ${key.name})...`);
+            const text = await callGoogleAI(prompt, key.key, options);
             return { text, source: 'google', success: true };
         } catch (error) {
-            console.error('Google AI failed:', error);
-            await markKeyFailed(googleKey.id);
+            console.error(`Google AI failed (Key: ${key.name}):`, error);
+            await markKeyFailed(key.id, timeoutMs);
             getAPIStatus().then(notifyStatusChange); // Update UI
+            // Loop continues to try next key
         }
     }
 
     // Try Perplexity
-    const perplexityKey = await getWorkingKey('perplexity');
-    if (perplexityKey) {
+    while (true) {
+        const perplexityKeys = await getActiveKeys('perplexity');
+        if (perplexityKeys.length === 0) break;
+
+        const key = perplexityKeys[0];
         try {
-            console.log('Using Perplexity AI...');
-            const text = await callPerplexityAI(prompt, perplexityKey.key);
+            console.log(`Using Perplexity AI (Key: ${key.name})...`);
+            const text = await callPerplexityAI(prompt, key.key, options);
             return { text, source: 'perplexity', success: true };
         } catch (error) {
-            console.error('Perplexity failed:', error);
-            await markKeyFailed(perplexityKey.id);
+            console.error(`Perplexity failed (Key: ${key.name}):`, error);
+            await markKeyFailed(key.id, timeoutMs);
             getAPIStatus().then(notifyStatusChange);
+            // Loop continues
         }
     }
 
@@ -266,36 +327,55 @@ export async function getAICompletion(
  * Priority: Google (streaming) -> Perplexity (streaming)
  */
 export async function* getAICompletionStream(prompt: string): AsyncGenerator<{ text: string; source: string; done: boolean }> {
+    // Check network first
+    try {
+        await checkNetworkConnection();
+    } catch (error) {
+        if (error instanceof Error && error.message === 'NO_INTERNET_CONNECTION') {
+            yield { text: 'Нет соединения с интернетом. Проверьте настройки сети.', source: 'none', done: true };
+            return;
+        }
+    }
+
+    const settings = await getSettings();
+    const timeoutMs = (settings.apiTimeoutMinutes || 5) * 60 * 1000;
+
     // Try Google streaming
-    const googleKey = await getWorkingKey('google');
-    if (googleKey) {
+    while (true) {
+        const googleKeys = await getActiveKeys('google');
+        if (googleKeys.length === 0) break;
+
+        const key = googleKeys[0];
         try {
-            console.log('Using Google AI (streaming)...');
-            for await (const chunk of streamGoogleAI(prompt, googleKey.key)) {
+            console.log(`Using Google AI (streaming, Key: ${key.name})...`);
+            for await (const chunk of streamGoogleAI(prompt, key.key)) {
                 yield { text: chunk, source: 'google', done: false };
             }
             yield { text: '', source: 'google', done: true };
             return;
         } catch (error) {
-            console.error('Google streaming failed:', error);
-            await markKeyFailed(googleKey.id);
+            console.error(`Google streaming failed (Key: ${key.name}):`, error);
+            await markKeyFailed(key.id, timeoutMs);
             getAPIStatus().then(notifyStatusChange);
         }
     }
 
     // Try Perplexity streaming
-    const perplexityKey = await getWorkingKey('perplexity');
-    if (perplexityKey) {
+    while (true) {
+        const perplexityKeys = await getActiveKeys('perplexity');
+        if (perplexityKeys.length === 0) break;
+
+        const key = perplexityKeys[0];
         try {
-            console.log('Using Perplexity AI (streaming)...');
-            for await (const chunk of streamPerplexityAI(prompt, perplexityKey.key)) {
+            console.log(`Using Perplexity AI (streaming, Key: ${key.name})...`);
+            for await (const chunk of streamPerplexityAI(prompt, key.key)) {
                 yield { text: chunk, source: 'perplexity', done: false };
             }
             yield { text: '', source: 'perplexity', done: true };
             return;
         } catch (error) {
-            console.error('Perplexity streaming failed:', error);
-            await markKeyFailed(perplexityKey.id);
+            console.error(`Perplexity streaming failed (Key: ${key.name}):`, error);
+            await markKeyFailed(key.id, timeoutMs);
             getAPIStatus().then(notifyStatusChange);
         }
     }
@@ -310,29 +390,105 @@ export async function* getAICompletionStream(prompt: string): AsyncGenerator<{ t
 export async function* getChatCompletionStream(
     messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>
 ): AsyncGenerator<{ text: string; source: string; done: boolean }> {
+    // Check network first
+    try {
+        await checkNetworkConnection();
+    } catch (error) {
+        if (error instanceof Error && error.message === 'NO_INTERNET_CONNECTION') {
+            yield { text: 'Нет соединения с интернетом. Проверьте настройки сети.', source: 'none', done: true };
+            return;
+        }
+    }
+
     // Format messages for API
     const formattedMessages = messages.map(m => ({
         role: m.role,
         content: m.content,
     }));
 
+    const settings = await getSettings();
+    const timeoutMs = (settings.apiTimeoutMinutes || 5) * 60 * 1000;
+
     // Try Google streaming (format as single prompt for Gemini)
-    const googleKey = await getWorkingKey('google');
-    if (googleKey) {
+    while (true) {
+        const googleKeys = await getActiveKeys('google');
+        if (googleKeys.length === 0) break;
+
+        const key = googleKeys[0];
         try {
-            console.log('Using Google AI for chat (streaming)...');
+            console.log(`Using Google AI for chat (streaming, Key: ${key.name})...`);
             const chatPrompt = formattedMessages
                 .map(m => `${m.role === 'user' ? 'User' : m.role === 'assistant' ? 'Assistant' : 'System'}: ${m.content}`)
                 .join('\n') + '\nAssistant:';
 
-            for await (const chunk of streamGoogleAI(chatPrompt, googleKey.key)) {
+            for await (const chunk of streamGoogleAI(chatPrompt, key.key)) {
                 yield { text: chunk, source: 'google', done: false };
             }
             yield { text: '', source: 'google', done: true };
             return;
         } catch (error) {
-            console.error('Google chat streaming failed:', error);
-            await markKeyFailed(googleKey.id);
+            console.error(`Google chat streaming failed (Key: ${key.name}):`, error);
+            await markKeyFailed(key.id, timeoutMs);
+        }
+    }
+
+    // Try Perplexity streaming
+    while (true) {
+        const perplexityKeys = await getActiveKeys('perplexity');
+        if (perplexityKeys.length === 0) break;
+
+        const key = perplexityKeys[0];
+        try {
+            console.log(`Using Perplexity AI for chat (streaming, Key: ${key.name})...`);
+
+            const response = await fetch('https://api.perplexity.ai/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${key.key}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    model: 'sonar',
+                    messages: formattedMessages,
+                    temperature: 0.7,
+                    max_tokens: 2048,
+                    stream: true,
+                }),
+            });
+
+            if (!response.ok) throw new Error(`Perplexity error: ${response.status}`);
+
+            const reader = response.body?.getReader();
+            if (!reader) throw new Error('No reader available');
+
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ') && !line.includes('[DONE]')) {
+                        try {
+                            const data = JSON.parse(line.slice(6));
+                            const text = data.choices?.[0]?.delta?.content;
+                            if (text) yield { text, source: 'perplexity', done: false };
+                        } catch (e) {
+                            // Skip invalid JSON
+                        }
+                    }
+                }
+            }
+            yield { text: '', source: 'perplexity', done: true };
+            return;
+        } catch (error) {
+            console.error(`Perplexity chat streaming failed (Key: ${key.name}):`, error);
+            await markKeyFailed(key.id, timeoutMs);
         }
     }
 

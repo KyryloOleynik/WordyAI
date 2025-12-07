@@ -3,11 +3,12 @@ import { useState, useEffect } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
 import { VProgress, VButton, StyledInput } from '@/components/ui/DesignSystem';
-import { CompletionScreen, UnifiedFeedbackModal, LoadingIndicator, ScreenContainer } from '@/components/ui/SharedComponents';
+import { CompletionScreen, UnifiedFeedbackModal, ScreenContainer, getApiKeyErrorConfig, LoadingOverlay, WordInfoModal } from '@/components/ui/SharedComponents';
 import { unifiedAI, ApiKeyError } from '@/services/unifiedAIManager';
 import { addWord, getSettings, addXP, XP_REWARDS, getAllWords } from '@/services/storageService';
 import { translateWord } from '@/services/translationService';
-import { getGrammarConcepts, addOrUpdateGrammarConcept } from '@/services/database';
+import { saveAIResult } from '@/services/aiResponseParser';
+import { getGrammarConcepts, addOrUpdateGrammarConcept, DictionaryWord, recordWordExposure } from '@/services/database';
 import { LEVELS } from '@/constants/common';
 
 const STORY_TOPICS = [
@@ -85,12 +86,14 @@ export default function StoryModeScreen() {
             const grammar = await getGrammarConcepts();
 
             // Select random words to practice (max 5)
-            const vocabWords = words
+            // Select random words to practice (max 5)
+            const targetWords = words
                 .filter(w => w.status !== 'known')
                 .slice(0, 10)
                 .sort(() => Math.random() - 0.5)
-                .slice(0, 5)
-                .map(w => w.text);
+                .slice(0, 5);
+
+            const vocabWords = targetWords.map(w => w.text);
 
             // Select grammar concepts to practice
             const grammarFocus = grammar
@@ -110,6 +113,12 @@ export default function StoryModeScreen() {
             if (result) {
                 setStory(result);
                 setStep('reading');
+
+                // Track exposure for the target vocabulary words
+                // We use the words we selected for practice
+                if (targetWords.length > 0) {
+                    targetWords.forEach(w => recordWordExposure(w.id));
+                }
             } else {
                 setFeedbackModal({
                     visible: true,
@@ -121,19 +130,7 @@ export default function StoryModeScreen() {
         } catch (error: any) {
             console.error('Story generation error:', error);
             if (error.name === 'ApiKeyError') {
-                setFeedbackModal({
-                    visible: true,
-                    type: 'warning',
-                    title: 'Ошибка ключа API',
-                    message: 'Для создания историй нужен API ключ.',
-                    primaryAction: {
-                        label: 'Настройки',
-                        onPress: () => {
-                            setFeedbackModal(prev => ({ ...prev, visible: false }));
-                            navigation.navigate('Settings' as never);
-                        }
-                    }
-                });
+                setFeedbackModal(getApiKeyErrorConfig(navigation, () => setFeedbackModal(prev => ({ ...prev, visible: false }))));
             } else {
                 setFeedbackModal({
                     visible: true,
@@ -221,71 +218,55 @@ export default function StoryModeScreen() {
         try {
             const currentQuestion = story.questions[currentQuestionIndex];
 
-            // First check the answer correctness
-            const result = await unifiedAI.checkStoryAnswer(
-                currentQuestion.question,
-                userAnswer,
-                currentQuestion.correctAnswer,
-                story.story
-            );
+            // Unified evaluation for content and grammar
+            const evaluation = await unifiedAI.evaluate({
+                type: 'story-answer',
+                question: currentQuestion.question,
+                answer: userAnswer,
+                correctAnswer: currentQuestion.correctAnswer,
+                storyContext: story.story
+            });
 
-            // Also evaluate user's English for grammar/spelling (if it's a longer response)
-            if (userAnswer.split(' ').length >= 3) {
-                const evaluation = await unifiedAI.evaluateEnglishText(
-                    userAnswer,
-                    `Answering question: ${currentQuestion.question}`
-                );
+            // Save grammar concepts and learned vocabulary
+            await saveAIResult({
+                grammarConcepts: evaluation.grammarConcepts as any,
+                vocabularySuggestions: evaluation.vocabularySuggestions as any
+            });
 
-                // Save grammar concepts from evaluation
-                for (const concept of evaluation.grammarConcepts) {
-                    try {
-                        await addOrUpdateGrammarConcept({
-                            name: concept.name,
-                            nameRu: concept.nameRu,
-                            description: concept.description,
-                            rule: concept.rule,
-                            examples: JSON.stringify([concept.example]),
-                        });
-                        console.log('[Story] Saved grammar concept:', concept.name);
-                    } catch (e) {
-                        console.error('[Story] Error saving grammar:', e);
-                    }
-                }
+            // Determine correctness based on accuracy score from AI
+            const isCorrect = (evaluation.accuracy || 0) >= 70;
 
-                // Save vocabulary suggestions
-                for (const word of evaluation.vocabularySuggestions) {
-                    try {
-                        await addWord({
-                            text: word.word.toLowerCase(),
-                            translation: word.translation,
-                            definition: word.definition,
-                            cefrLevel: word.level || 'B1',
-                            status: 'new',
-                            timesShown: 0,
-                            timesCorrect: 0,
-                            timesWrong: 0,
-                            lastReviewedAt: null,
-                            nextReviewAt: Date.now(),
-                            source: 'lookup',
-                            reviewCount: 0,
-                            masteryScore: 0,
-                        });
-                        console.log('[Story] Saved vocabulary word:', word.word);
-                    } catch (e) {
-                        console.error('[Story] Error saving word:', e);
-                    }
-                }
+            // Construct feedback message
+            let feedback = evaluation.feedback;
+            if (evaluation.corrections && evaluation.corrections.length > 0) {
+                const firstError = evaluation.corrections[0];
+                const correctionMsg = `\n\nCorrection: ${firstError.wrong} → ${firstError.correct}`;
+                feedback += correctionMsg;
             }
 
-            setCurrentFeedback(result.feedback);
-            setResults(prev => [...prev, result]);
-        } catch (error) {
+            setCurrentFeedback(feedback);
+            setResults(prev => [...prev, { isCorrect, feedback }]);
+
+            // If correct, maybe add some XP instantly? Or waiting for end.
+            if (isCorrect) {
+                // optional: instant positive feedback sound
+            }
+        } catch (error: any) {
             console.error('Answer check error:', error);
+            if (error.name === 'ApiKeyError') {
+                setFeedbackModal(getApiKeyErrorConfig(navigation, () => setFeedbackModal(prev => ({ ...prev, visible: false }))));
+            } else {
+                setFeedbackModal({
+                    visible: true,
+                    type: 'error',
+                    title: 'Ошибка',
+                    message: 'Не удалось проверить ответ. Попробуйте еще раз.'
+                });
+            }
         } finally {
             setIsLoading(false);
         }
     };
-
     const nextQuestion = () => {
         setCurrentFeedback(null);
         setUserAnswer('');
@@ -311,15 +292,7 @@ export default function StoryModeScreen() {
 
     // With unifiedAI, we don't need to wait for local model - it auto-selects backend
 
-    if (isLoading && step !== 'questions') {
-        return (
-            <ScreenContainer style={styles.loadingContainer}>
-                <LoadingIndicator
-                    text={step === 'level' ? 'Генерация истории...' : 'Обработка...'}
-                />
-            </ScreenContainer>
-        );
-    }
+
 
     // Topic Selection
     if (step === 'topic') {
@@ -374,6 +347,10 @@ export default function StoryModeScreen() {
                     message={feedbackModal.message}
                     primaryAction={feedbackModal.primaryAction}
                     onClose={() => setFeedbackModal(prev => ({ ...prev, visible: false }))}
+                />
+                <LoadingOverlay
+                    visible={isLoading}
+                    text="Генерация истории..."
                 />
             </ScreenContainer>
         );
@@ -434,46 +411,24 @@ export default function StoryModeScreen() {
                 </ScrollView>
 
                 {/* Word Lookup Modal */}
-                <Modal visible={showWordModal} transparent animationType="fade">
-                    <Pressable style={styles.modalOverlay} onPress={() => setShowWordModal(false)}>
-                        <Pressable style={styles.wordModalContent} onPress={e => e.stopPropagation()}>
-                            <Text style={styles.wordModalTitle}>{wordLookup?.word}</Text>
-                            {wordLookup?.isLoading ? (
-                                <View style={{ padding: spacing.lg }}>
-                                    <LoadingIndicator text="Поиск..." />
-                                </View>
-                            ) : (
-                                <>
-                                    {/* Russian Translation */}
-                                    <View style={styles.translationBox}>
-                                        <Text style={styles.translationLabel}>Перевод:</Text>
-                                        <Text style={styles.translationText}>{wordLookup?.translation}</Text>
-                                    </View>
-
-                                    {/* English Definition */}
-                                    <View style={styles.definitionBox}>
-                                        <Text style={styles.definitionLabel}>Definition:</Text>
-                                        <Text style={styles.definitionText}>{wordLookup?.definition}</Text>
-                                    </View>
-
-                                    {/* CEFR Level */}
-                                    <View style={styles.cefrBox}>
-                                        <Text style={styles.cefrLabel}>Уровень: </Text>
-                                        <Text style={styles.cefrValue}>{wordLookup?.cefrLevel}</Text>
-                                    </View>
-
-                                    {!addedWords.has(wordLookup?.word || '') ? (
-                                        <Pressable style={styles.addWordButton} onPress={addWordToDictionary}>
-                                            <Text style={styles.addWordButtonText}>+ Добавить в словарь</Text>
-                                        </Pressable>
-                                    ) : (
-                                        <Text style={styles.alreadyAdded}>✓ Добавлено в словарь</Text>
-                                    )}
-                                </>
-                            )}
-                        </Pressable>
-                    </Pressable>
-                </Modal>
+                {wordLookup && (
+                    <WordInfoModal
+                        visible={showWordModal}
+                        word={wordLookup.word}
+                        translation={wordLookup.translation}
+                        definition={wordLookup.definition}
+                        cefrLevel={wordLookup.cefrLevel}
+                        onClose={() => setShowWordModal(false)}
+                    >
+                        {!addedWords.has(wordLookup.word) ? (
+                            <Pressable style={styles.addWordButton} onPress={addWordToDictionary}>
+                                <Text style={styles.addWordButtonText}>+ Добавить в словарь</Text>
+                            </Pressable>
+                        ) : (
+                            <Text style={styles.alreadyAdded}>✓ Добавлено в словарь</Text>
+                        )}
+                    </WordInfoModal>
+                )}
                 <UnifiedFeedbackModal
                     visible={feedbackModal.visible}
                     type={feedbackModal.type}
@@ -586,22 +541,11 @@ export default function StoryModeScreen() {
         );
     }
 
-    return null;
 }
 
 const styles = StyleSheet.create({
     container: {
         // Handled by ScreenContainer
-    },
-    loadingContainer: {
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: spacing.xl,
-    },
-    loadingText: {
-        marginTop: spacing.md,
-        color: colors.text.secondary,
-        ...typography.body,
     },
     header: {
         display: 'flex',
@@ -625,6 +569,7 @@ const styles = StyleSheet.create({
         textAlign: 'center',
     },
     progress: {
+        marginBottom: spacing.lg,
         ...typography.h3,
         color: colors.text.primary,
     },
@@ -728,69 +673,6 @@ const styles = StyleSheet.create({
     },
     disabledButton: {
         backgroundColor: colors.border.medium,
-    },
-    modalOverlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.8)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: spacing.xl,
-    },
-    wordModalContent: {
-        backgroundColor: colors.surface,
-        borderRadius: borderRadius.xxl,
-        padding: spacing.xxl,
-        width: '100%',
-        maxWidth: 340,
-    },
-    wordModalTitle: {
-        ...typography.h1,
-        color: colors.text.primary,
-        marginBottom: spacing.lg,
-        textAlign: 'center',
-    },
-    translationBox: {
-        backgroundColor: `${colors.primary[300]}15`,
-        borderRadius: borderRadius.md,
-        padding: spacing.md,
-        marginBottom: spacing.md,
-    },
-    translationLabel: {
-        ...typography.caption,
-        color: colors.text.tertiary,
-        marginBottom: spacing.xs,
-    },
-    translationText: {
-        ...typography.h3,
-        color: colors.primary[300],
-    },
-    definitionBox: {
-        backgroundColor: colors.surfaceElevated,
-        borderRadius: borderRadius.md,
-        padding: spacing.md,
-        marginBottom: spacing.md,
-    },
-    definitionLabel: {
-        ...typography.caption,
-        color: colors.text.tertiary,
-        marginBottom: spacing.xs,
-    },
-    definitionText: {
-        ...typography.body,
-        color: colors.text.secondary,
-    },
-    cefrBox: {
-        flexDirection: 'row',
-        justifyContent: 'center',
-        marginBottom: spacing.lg,
-    },
-    cefrLabel: {
-        ...typography.bodySmall,
-        color: colors.text.tertiary,
-    },
-    cefrValue: {
-        ...typography.bodyBold,
-        color: colors.accent.blue,
     },
     addWordButton: {
         backgroundColor: colors.primary[300],

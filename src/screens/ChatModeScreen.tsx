@@ -5,11 +5,18 @@ import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
 import { unifiedAI, ApiKeyError } from '@/services/unifiedAIManager';
 import { StyledInput } from '@/components/ui/DesignSystem';
 import TappableText from '@/components/ui/TappableText';
-import { LoadingIndicator, ErrorFeedbackPlate, UnifiedFeedbackModal } from '@/components/ui/SharedComponents';
+import { LoadingIndicator, ErrorFeedbackPlate, UnifiedFeedbackModal, getApiKeyErrorConfig } from '@/components/ui/SharedComponents';
 import { saveChatSession, ChatSession, ChatMessage as StoredMessage, getAllWords, addWord } from '@/services/storageService';
 import { getGrammarConcepts, GrammarConcept, DictionaryWord, updateWordMetrics } from '@/services/database';
 import { saveAIResult, trackWordUsage } from '@/services/aiResponseParser';
-import { GrammarError } from '@/services/grammarDetectionService';
+
+interface GrammarError {
+    pattern: string;
+    patternRu?: string;
+    description: string;
+    example: string;
+    userMistake: string;
+}
 
 interface ChatMessage {
     id: string;
@@ -223,10 +230,11 @@ export default function ChatModeScreen() {
                 .join('\n');
 
             // Use structured evaluation for the user's message
-            const evaluation = await unifiedAI.evaluateEnglishText(
-                userMessage.content,
-                `Topic: ${selectedTopic || 'general conversation'}. Conversation: ${conversationHistory}`
-            );
+            const evaluation = await unifiedAI.evaluate({
+                type: 'conversation',
+                userText: userMessage.content,
+                context: `Topic: ${selectedTopic || 'general conversation'}. Conversation: ${conversationHistory}`
+            });
 
             const assistantId = (Date.now() + 1).toString();
 
@@ -237,25 +245,30 @@ export default function ChatModeScreen() {
             });
 
             // Store correction info if errors found
-            const correctionText = evaluation.hasErrors && evaluation.corrections.length > 0
-                ? evaluation.corrections[0]
-                : null;
+            let correctionText: string | null = null;
+            let firstCorrection: { wrong: string; correct: string } | null = null;
+
+            if (evaluation.corrections && evaluation.corrections.length > 0) {
+                const first = evaluation.corrections[0];
+                firstCorrection = first;
+                correctionText = `${first.wrong} → ${first.correct}`;
+            }
 
             // Add assistant message with the response
             setMessages(prev => {
                 const updated = [...prev, {
                     id: assistantId,
                     role: 'assistant' as const,
-                    content: evaluation.conversationResponse,
+                    content: (evaluation as any).conversationResponse || evaluation.feedback || '...',
                     timestamp: Date.now(),
                     isStreaming: false,
-                    corrections: correctionText ? `${correctionText.wrong} → ${correctionText.correct}` : null,
+                    corrections: correctionText,
                     grammarError: evaluation.grammarConcepts.length > 0 ? {
                         pattern: evaluation.grammarConcepts[0].name,
                         patternRu: evaluation.grammarConcepts[0].nameRu,
                         description: evaluation.grammarConcepts[0].description,
                         example: evaluation.grammarConcepts[0].example,
-                        userMistake: correctionText?.wrong || '',
+                        userMistake: firstCorrection?.wrong || '',
                     } : null,
                 }];
                 saveSession(updated, selectedTopic || 'general', customTopic || undefined);
@@ -264,17 +277,11 @@ export default function ChatModeScreen() {
 
             // Track word usage from user message
             const userText = userMessage.content.toLowerCase();
-            // We use the helper to track usage against known words
-            // Logic: if the word appears in "corrections.wrong", then it was used incorrectly.
-            // Simplified: we assume 'correct' unless explicitly corrected.
-            // Since trackWordUsage takes a boolean for whole text correctness OR we iterate manually.
-            // I'll use manual iteration with trackWordUsage per word for precision
-
             for (const word of vocabWords) {
                 if (userText.includes(word.text.toLowerCase())) {
-                    const wordWasCorrected = evaluation.corrections.some(c =>
+                    const wordWasCorrected = evaluation.corrections?.some(c =>
                         c.wrong.toLowerCase().includes(word.text.toLowerCase())
-                    );
+                    ) || false;
                     await trackWordUsage(userText, [word], !wordWasCorrected);
                 }
             }
@@ -287,19 +294,7 @@ export default function ChatModeScreen() {
             // Simple approach: standard error handling.
 
             if (error.name === 'ApiKeyError') {
-                setFeedbackModal({
-                    visible: true,
-                    type: 'warning',
-                    title: 'Ошибка ключа API',
-                    message: 'Не удалось подключиться к AI. Проверьте API ключ в настройках.',
-                    primaryAction: {
-                        label: 'Настройки',
-                        onPress: () => {
-                            setFeedbackModal(prev => ({ ...prev, visible: false }));
-                            navigation.navigate('Settings');
-                        }
-                    }
-                });
+                setFeedbackModal(getApiKeyErrorConfig(navigation, () => setFeedbackModal(prev => ({ ...prev, visible: false }))));
             } else {
                 setFeedbackModal({
                     visible: true,

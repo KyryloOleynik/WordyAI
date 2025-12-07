@@ -1,11 +1,11 @@
 /**
  * Shared UI Components - Consistent styling across the app
  */
-import { StyleSheet, Text, View, Pressable, Animated, Modal, ViewStyle, ScrollView } from 'react-native';
+import { StyleSheet, Text, View, Pressable, Animated, Modal, ViewStyle, ScrollView, ActivityIndicator } from 'react-native';
 import { useRef, useEffect, useState } from 'react';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
 import { useSpeech } from '@/hooks/useSpeech';
-import { VButton } from './DesignSystem';
+import { VButton, VInput } from './DesignSystem';
 
 // ============= SUCCESS ANIMATION =============
 
@@ -134,6 +134,7 @@ interface WordInfoModalProps {
     examples?: string[];
     cefrLevel?: string;
     onClose: () => void;
+    children?: React.ReactNode;
 }
 
 export function WordInfoModal({
@@ -146,6 +147,7 @@ export function WordInfoModal({
     examples,
     cefrLevel,
     onClose,
+    children,
 }: WordInfoModalProps) {
     const { speak, stop, isSpeaking } = useSpeech();
 
@@ -223,10 +225,15 @@ export function WordInfoModal({
                         </View>
                     )}
 
-                    {/* Close button */}
-                    <Pressable style={wordStyles.closeButton} onPress={handleClose}>
-                        <Text style={wordStyles.closeText}>Закрыть</Text>
-                    </Pressable>
+                    {/* Custom Children (Stats, Buttons, etc) */}
+                    {children}
+
+                    {/* Close button (only if no children, or maybe always? typically children handle actions) */}
+                    {!children && (
+                        <Pressable style={wordStyles.closeButton} onPress={handleClose}>
+                            <Text style={wordStyles.closeText}>Закрыть</Text>
+                        </Pressable>
+                    )}
                 </Pressable>
             </Pressable>
         </Modal>
@@ -252,6 +259,181 @@ export function ScreenContainer({ children, style, padding = false }: ScreenCont
         </View>
     );
 }
+// ============= EMPTY STATE =============
+
+interface EmptyStateProps {
+    icon?: string;
+    title?: string;
+    message: string;
+    actionLabel?: string;
+    onAction?: () => void;
+}
+
+export function EmptyState({ icon = '📭', title, message, actionLabel, onAction }: EmptyStateProps) {
+    return (
+        <View style={emptyStyles.container}>
+            <Text style={emptyStyles.icon}>{icon}</Text>
+            {title && <Text style={emptyStyles.title}>{title}</Text>}
+            <Text style={emptyStyles.text}>{message}</Text>
+            {actionLabel && onAction && (
+                <View style={emptyStyles.buttonContainer}>
+                    <VButton title={actionLabel} onPress={onAction} />
+                </View>
+            )}
+        </View>
+    );
+}
+
+const emptyStyles = StyleSheet.create({
+    container: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: spacing.xxxl,
+    },
+    title: {
+        ...typography.h3,
+        color: colors.text.primary,
+        marginBottom: spacing.sm,
+        textAlign: 'center',
+    },
+    icon: {
+        fontSize: 48,
+        marginBottom: spacing.lg,
+    },
+    text: {
+        ...typography.body,
+        color: colors.text.secondary,
+        textAlign: 'center',
+        marginBottom: spacing.xl,
+    },
+    buttonContainer: {
+        minWidth: 200,
+    },
+});
+
+// ============= INPUT MODAL =============
+
+interface InputModalProps {
+    visible: boolean;
+    title: string;
+    value: string;
+    onChangeText: (text: string) => void;
+    placeholder?: string;
+    confirmLabel?: string;
+    onConfirm: () => void;
+    onCancel: () => void;
+    loading?: boolean;
+    multiline?: boolean;
+    numberOfLines?: number;
+}
+
+export function InputModal({
+    visible,
+    title,
+    value,
+    onChangeText,
+    placeholder,
+    confirmLabel = 'OK',
+    onConfirm,
+    onCancel,
+    loading,
+    multiline,
+    numberOfLines,
+}: InputModalProps) {
+    return (
+        <Modal
+            visible={visible}
+            transparent
+            animationType="fade"
+            onRequestClose={onCancel}
+        >
+            <Pressable style={wordStyles.overlay} onPress={onCancel}>
+                <Pressable style={wordStyles.modal} onPress={e => e.stopPropagation()}>
+                    <Text style={[wordStyles.word, { textAlign: 'center', marginBottom: spacing.lg }]}>
+                        {title}
+                    </Text>
+
+                    <View style={{ marginBottom: spacing.lg }}>
+                        <VInput
+                            value={value}
+                            onChangeText={onChangeText}
+                            placeholder={placeholder}
+                            autoFocus
+                            multiline={multiline}
+                            numberOfLines={numberOfLines}
+                            style={multiline ? { minHeight: 100, textAlignVertical: 'top' } : undefined}
+                        />
+                    </View>
+
+                    <View style={{ gap: spacing.sm }}>
+                        <VButton
+                            title={confirmLabel}
+                            onPress={onConfirm}
+                            loading={loading}
+                            fullWidth
+                        />
+                        <VButton
+                            title="Отмена"
+                            onPress={onCancel}
+                            variant="ghost"
+                            fullWidth
+                            disabled={loading}
+                        />
+                    </View>
+                </Pressable>
+            </Pressable>
+        </Modal>
+    );
+}
+
+// ============= LOADING OVERLAY =============
+
+interface LoadingOverlayProps {
+    visible: boolean;
+    text?: string;
+    subtext?: string;
+}
+
+export function LoadingOverlay({ visible, text = 'Загрузка...', subtext }: LoadingOverlayProps) {
+    if (!visible) return null;
+
+    return (
+        <View style={loadingStyles.overlay}>
+            <View style={loadingStyles.container}>
+                <ActivityIndicator size="large" color={colors.primary[300]} />
+                <Text style={loadingStyles.text}>{text}</Text>
+                {subtext && <Text style={loadingStyles.subtext}>{subtext}</Text>}
+            </View>
+        </View>
+    );
+}
+
+const loadingStyles = StyleSheet.create({
+    overlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: colors.background,
+        zIndex: 2000,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    container: {
+        alignItems: 'center',
+        padding: spacing.xl,
+        gap: spacing.lg,
+    },
+    text: {
+        ...typography.h3,
+        color: colors.text.primary,
+        marginTop: spacing.md,
+        textAlign: 'center',
+    },
+    subtext: {
+        ...typography.body,
+        color: colors.text.secondary,
+        textAlign: 'center',
+    }
+});
 
 const wordStyles = StyleSheet.create({
     overlay: {
@@ -372,82 +554,7 @@ export function StreamingText({ text, style }: StreamingTextProps) {
     );
 }
 
-// ============= PRIMARY BUTTON =============
 
-interface PrimaryButtonProps {
-    title: string;
-    onPress: () => void;
-    disabled?: boolean;
-    loading?: boolean;
-    variant?: 'primary' | 'secondary' | 'success';
-    icon?: string;
-}
-
-export function PrimaryButton({
-    title,
-    onPress,
-    disabled,
-    loading,
-    variant = 'primary',
-    icon,
-}: PrimaryButtonProps) {
-    const getBackgroundColor = () => {
-        if (disabled) return colors.border.medium;
-        switch (variant) {
-            case 'success': return colors.accent.green;
-            case 'secondary': return colors.surface;
-            default: return colors.primary[300];
-        }
-    };
-
-    const getTextColor = () => {
-        if (variant === 'secondary') return colors.text.primary;
-        return colors.text.inverse;
-    };
-
-    return (
-        <Pressable
-            style={({ pressed }) => [
-                buttonStyles.button,
-                { backgroundColor: getBackgroundColor() },
-                pressed && !disabled && buttonStyles.pressed,
-                disabled && buttonStyles.disabled,
-            ]}
-            onPress={onPress}
-            disabled={disabled || loading}
-        >
-            {icon && <Text style={buttonStyles.icon}>{icon}</Text>}
-            <Text style={[buttonStyles.text, { color: getTextColor() }]}>
-                {loading ? 'Загрузка...' : title}
-            </Text>
-        </Pressable>
-    );
-}
-
-const buttonStyles = StyleSheet.create({
-    button: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingVertical: spacing.lg,
-        paddingHorizontal: spacing.xl,
-        borderRadius: borderRadius.lg,
-        gap: spacing.sm,
-    },
-    pressed: {
-        opacity: 0.9,
-        transform: [{ scale: 0.98 }],
-    },
-    disabled: {
-        opacity: 0.5,
-    },
-    icon: {
-        fontSize: 20,
-    },
-    text: {
-        ...typography.bodyBold,
-    },
-});
 
 // ============= LOADING INDICATOR =============
 
@@ -456,50 +563,15 @@ interface LoadingIndicatorProps {
 }
 
 export function LoadingIndicator({ text = 'Загрузка...' }: LoadingIndicatorProps) {
-    const pulseAnim = useRef(new Animated.Value(1)).current;
-
-    useEffect(() => {
-        Animated.loop(
-            Animated.sequence([
-                Animated.timing(pulseAnim, { toValue: 0.6, duration: 800, useNativeDriver: true }),
-                Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
-            ])
-        ).start();
-    }, []);
-
     return (
         <View style={loadingStyles.container}>
-            <Animated.View style={[loadingStyles.dots, { opacity: pulseAnim }]}>
-                <View style={loadingStyles.dot} />
-                <View style={loadingStyles.dot} />
-                <View style={loadingStyles.dot} />
-            </Animated.View>
+            <ActivityIndicator size="small" color={colors.primary[300]} />
             <Text style={loadingStyles.text}>{text}</Text>
         </View>
     );
 }
 
-const loadingStyles = StyleSheet.create({
-    container: {
-        alignItems: 'center',
-        padding: spacing.lg,
-    },
-    dots: {
-        flexDirection: 'row',
-        gap: spacing.sm,
-        marginBottom: spacing.md,
-    },
-    dot: {
-        width: 10,
-        height: 10,
-        borderRadius: 5,
-        backgroundColor: colors.primary[300],
-    },
-    text: {
-        ...typography.body,
-        color: colors.text.secondary,
-    },
-});
+
 
 // ============= STREAK ANIMATION =============
 

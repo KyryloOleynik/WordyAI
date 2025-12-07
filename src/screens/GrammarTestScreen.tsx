@@ -6,8 +6,9 @@ import { StyleSheet, Text, View, SafeAreaView, ActivityIndicator, ScrollView, Pr
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { colors, spacing, typography, borderRadius } from '@/lib/design/theme';
 import { VButton, VCard, playSound } from '@/components/ui/DesignSystem';
-import { UnifiedFeedbackModal } from '@/components/ui/SharedComponents';
+import { UnifiedFeedbackModal, getApiKeyErrorConfig } from '@/components/ui/SharedComponents';
 import { unifiedAI } from '@/services/unifiedAIManager';
+import { PromptTemplates } from '@/services/promptTemplates';
 import { updateGrammarMetrics, GrammarConcept } from '@/services/database';
 
 type RouteParams = {
@@ -20,6 +21,7 @@ interface Question {
     correctAnswer: string;
     type: 'fill-blank' | 'multiple-choice';
     options?: string[];
+    translation?: string;
 }
 
 export default function GrammarTestScreen() {
@@ -56,17 +58,10 @@ export default function GrammarTestScreen() {
         setError(null);
 
         try {
-            const prompt = `Generate 5 grammar test questions about "${concept.name}" (${concept.nameRu}).
-
-Rule: ${concept.rule || concept.description}
-
-Output JSON array only:
-[
-  {"question": "Fill: I ___ to school yesterday.", "correctAnswer": "went", "type": "fill-blank"},
-  {"question": "Choose correct: She ___ there for years.", "correctAnswer": "has been", "type": "multiple-choice", "options": ["has been", "was", "is", "were"]}
-]
-
-Mix fill-blank and multiple-choice. Make them progressively harder.`;
+            const prompt = PromptTemplates.generateGrammarTest(
+                concept.name,
+                concept.rule || concept.description
+            );
 
             const response = await unifiedAI.generateText(prompt, { jsonMode: true });
 
@@ -90,26 +85,15 @@ Mix fill-blank and multiple-choice. Make them progressively harder.`;
                 correctAnswer: q.correctAnswer,
                 type: q.type || 'fill-blank',
                 options: q.options,
+                translation: q.translation
             })));
             setScore({ correct: 0, total: parsed.length });
 
         } catch (e: any) {
             console.warn(e);
             if (e.name === 'ApiKeyError' || (e.message && e.message.includes('API'))) {
-                setFeedbackModal({
-                    visible: true,
-                    type: 'warning',
-                    title: 'Ошибка AI',
-                    message: 'Не удалось сгенерировать тест. Проверьте настройки API ключа.',
-                    primaryAction: {
-                        label: 'Настройки',
-                        onPress: () => {
-                            setFeedbackModal(prev => ({ ...prev, visible: false }));
-                            navigation.navigate('Settings' as never);
-                        }
-                    }
-                });
-                setIsLoading(false); // Stop loading indicator
+                setFeedbackModal(getApiKeyErrorConfig(navigation, () => setFeedbackModal(prev => ({ ...prev, visible: false }))));
+                setIsLoading(false);
             } else {
                 setError('Не удалось создать тест. Попробуйте ещё раз.');
             }
@@ -206,6 +190,27 @@ Mix fill-blank and multiple-choice. Make them progressively harder.`;
     }
 
     // Test
+    if (questions.length === 0 || !questions[currentIndex]) {
+        return (
+            <SafeAreaView style={styles.container}>
+                <View style={styles.centerContainer}>
+                    <ActivityIndicator size="large" color={colors.primary[300]} />
+                    <UnifiedFeedbackModal
+                        visible={feedbackModal.visible}
+                        type={feedbackModal.type}
+                        title={feedbackModal.title}
+                        message={feedbackModal.message}
+                        primaryAction={feedbackModal.primaryAction ? {
+                            label: feedbackModal.primaryAction.label,
+                            onPress: feedbackModal.primaryAction.onPress,
+                        } : undefined}
+                        onClose={() => setFeedbackModal(prev => ({ ...prev, visible: false }))}
+                    />
+                </View>
+            </SafeAreaView>
+        );
+    }
+
     const current = questions[currentIndex];
     return (
         <SafeAreaView style={styles.container}>
@@ -220,6 +225,9 @@ Mix fill-blank and multiple-choice. Make them progressively harder.`;
             <ScrollView contentContainerStyle={styles.content}>
                 <VCard style={styles.questionCard}>
                     <Text style={styles.questionText}>{current.question}</Text>
+                    {current.translation && (
+                        <Text style={styles.translationText}>{current.translation}</Text>
+                    )}
                 </VCard>
 
                 {current.type === 'multiple-choice' && current.options ? (
@@ -319,6 +327,7 @@ const styles = StyleSheet.create({
         marginTop: spacing.md,
     },
     loadingSubtext: {
+        textAlign: 'center',
         ...typography.body,
         color: colors.text.secondary,
     },
@@ -372,6 +381,13 @@ const styles = StyleSheet.create({
         color: colors.text.primary,
         textAlign: 'center',
         lineHeight: 32,
+    },
+    translationText: {
+        ...typography.body,
+        color: colors.text.secondary,
+        textAlign: 'center',
+        marginTop: spacing.sm,
+        fontStyle: 'italic',
     },
     optionsContainer: {
         gap: spacing.md,

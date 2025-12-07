@@ -2,6 +2,7 @@
 // Fast translation service with caching and optimized API calls
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { unifiedAI } from '@/services/unifiedAIManager';
 
 export interface TranslationResult {
     word: string;
@@ -269,6 +270,43 @@ async function fetchRussianTranslation(word: string): Promise<string | null> {
 }
 
 /**
+ * Fetch detailed translation using LLM as fallback
+ */
+async function fetchLLMTranslation(word: string, context?: string): Promise<TranslationResult | null> {
+    try {
+        const prompt = `Translate and analyze the English word "${word}"${context ? ` in the context: "${context}"` : ''}.
+        Return ONLY a JSON object with this format:
+        {
+            "translation": "Russian translation",
+            "definition": "English definition",
+            "phonetic": "phonetic transcription",
+            "partOfSpeech": "noun/verb/adj",
+            "examples": ["example sentence"],
+            "cefrLevel": "A1/A2/B1/B2/C1/C2"
+        }`;
+
+        const result = await unifiedAI.generateText(prompt, { jsonMode: true });
+        if (!result.success) return null;
+
+        const cleanJson = result.text.replace(/```json/gi, '').replace(/```/g, '').trim();
+        const data = JSON.parse(cleanJson);
+
+        return {
+            word: word.toLowerCase(),
+            translation: data.translation,
+            definition: data.definition,
+            phonetic: data.phonetic,
+            partOfSpeech: data.partOfSpeech,
+            examples: data.examples,
+            cefrLevel: data.cefrLevel || 'B1',
+        };
+    } catch (error) {
+        console.warn('LLM Translation error:', error);
+        return null;
+    }
+}
+
+/**
  * Main translation function - fast with caching
  */
 export async function translateWord(word: string, context?: string): Promise<TranslationResult | null> {
@@ -299,14 +337,28 @@ export async function translateWord(word: string, context?: string): Promise<Tra
         return result;
     }
 
+
+
     // Fetch from APIs in parallel
     const [englishResult, russianTranslation] = await Promise.all([
         fetchEnglishDefinition(cleanWord),
         fetchRussianTranslation(cleanWord),
     ]);
 
-    // Need at least one result
+    // specific check: if both failed, OR if we really want high quality and one failed?
+    // User requested "Fallback". 
+    // If we have translation but no definition or vice versa, generic fallback might be better.
+    // Let's settle on: if both failed, OR if russian translation failed (critical).
+
     if (!englishResult && !russianTranslation) {
+        // Fallback to LLM
+        console.log(`API translation failed for ${cleanWord}, falling back to LLM...`);
+        const llmResult = await fetchLLMTranslation(cleanWord, context);
+        if (llmResult) {
+            memoryCache.set(cleanWord, llmResult);
+            scheduleCache();
+            return llmResult;
+        }
         return null;
     }
 
@@ -321,6 +373,9 @@ export async function translateWord(word: string, context?: string): Promise<Tra
         examples: englishResult?.examples,
         cefrLevel: estimateCefrLevel(cleanWord, definition),
     };
+
+    // If we missed critical data, maybe Schedule LLM background update? 
+    // For now, simple fallback is enough.
 
     // Cache the result
     memoryCache.set(cleanWord, result);

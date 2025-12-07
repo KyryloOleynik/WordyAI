@@ -156,7 +156,7 @@ Example:
 {
   "sentence": "The _____ was very interesting.",
   "missingWord": "${word.text}",
-  "russianTranslation": "Русский перевод предложения"
+  "russianTranslation": "Русский перевод предложения полностью без пропусков"
 }
 
 IMPORTANT: The sentence MUST contain _____ as a placeholder for the missing word.`;

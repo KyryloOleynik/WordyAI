@@ -441,6 +441,23 @@ export async function updateWordMetrics(
 }
 
 /**
+ * Record passive exposure to a word (e.g. reading in a story)
+ * Increments timesShown without affecting mastery score directly
+ */
+export async function recordWordExposure(wordId: string): Promise<void> {
+    if (!db) return;
+
+    try {
+        await db.runAsync(
+            'UPDATE words SET timesShown = timesShown + 1, lastReviewedAt = ? WHERE id = ?',
+            [Date.now(), wordId]
+        );
+    } catch (error) {
+        console.error('Error recording word exposure:', error);
+    }
+}
+
+/**
  * Calculate and update mastery score for a word
  * Formula: 70% accuracy + 30% repetition factor
  */
@@ -619,9 +636,13 @@ export async function addOrUpdateGrammarConcept(concept: Omit<GrammarConcept, 'i
             // We prepend new examples to keep them fresh
             const combined = [...new Set([...newExamples, ...currentExamples])].slice(0, 5); // Keep max 5
 
-            // Increment error count and update examples
+            // Increment error count, decrease mastery, and update examples
             await db.runAsync(
-                'UPDATE grammar_concepts SET errorCount = errorCount + 1, examples = ? WHERE id = ?',
+                `UPDATE grammar_concepts SET 
+                    errorCount = errorCount + 1, 
+                    masteryScore = MAX(0.0, masteryScore - 0.1),
+                    examples = ? 
+                WHERE id = ?`,
                 [JSON.stringify(combined), existing.id]
             );
         } else {
